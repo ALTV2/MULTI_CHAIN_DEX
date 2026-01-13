@@ -1,0 +1,16 @@
+{
+  "solidity.compileUsingRemoteVersion": "v0.8.20",
+  "solidity.packageDefaultDependenciesContractsDirectory": "",
+  "solidity.packageDefaultDependenciesDirectory": "ethereum/node_modules",
+  "solidity.remappings": [
+    "@openzeppelin/contracts/=ethereum/node_modules/@openzeppelin/contracts/"
+  ],
+  "editor.formatOnSave": true,
+  "solidity.formatter": "prettier",
+  "[solidity]": {
+    "editor.defaultFormatter": "NomicFoundation.hardhat-solidity"
+  },
+  "files.associations": {
+    "*.sol": "solidity"
+  }
+}

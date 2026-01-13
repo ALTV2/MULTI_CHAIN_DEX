@@ -1,6 +1,7 @@
 require("@nomicfoundation/hardhat-toolbox");
 require("hardhat-gas-reporter");
 require("solidity-coverage");
+require("dotenv").config();
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
@@ -19,16 +20,17 @@ module.exports = {
     },
     localhost: {
       url: "http://127.0.0.1:8545"
+    },
+    sepolia: {
+      url: process.env.SEPOLIA_RPC_URL || "",
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      chainId: 11155111
     }
-    // Раскомментируйте и настройте для развертывания в тестовых сетях:
-    // sepolia: {
-    //   url: process.env.SEPOLIA_RPC_URL || "",
-    //   accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : []
-    // },
-    // mainnet: {
-    //   url: process.env.MAINNET_RPC_URL || "",
-    //   accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : []
-    // }
+  },
+  etherscan: {
+    apiKey: {
+      sepolia: process.env.ETHERSCAN_API_KEY || ""
+    }
   },
   gasReporter: {
     enabled: process.env.REPORT_GAS === "true",

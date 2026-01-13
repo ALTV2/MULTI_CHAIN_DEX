@@ -61,7 +61,7 @@ describe("TestERC20", function () {
 
       await expect(
         testToken.mint(ethers.ZeroAddress, mintAmount)
-      ).to.be.revertedWith("Invalid recipient address");
+      ).to.be.revertedWithCustomError(testToken, "InvalidRecipient");
     });
 
     it("Should allow multiple mints", async function () {

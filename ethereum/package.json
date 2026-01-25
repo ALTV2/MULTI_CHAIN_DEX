@@ -13,7 +13,9 @@
     "deploy:local": "hardhat run scripts/deploy.js --network localhost",
     "deploy:hardhat": "hardhat run scripts/deploy.js --network hardhat",
     "deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia",
-    "verify:sepolia": "hardhat verify --network sepolia"
+    "verify:sepolia": "hardhat verify --network sepolia",
+    "check-balance": "hardhat run scripts/check-balance.js --network sepolia",
+    "verify-deployment": "hardhat run scripts/verify-deployment.js --network sepolia"
   },
   "keywords": [],
   "author": "",

@@ -23,3 +23,7 @@ gas-report.txt
 
 # OS
 .DS_Store
+
+# Deployment files
+deployment-info.json
+verify-commands.sh

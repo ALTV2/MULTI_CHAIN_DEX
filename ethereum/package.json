@@ -15,7 +15,8 @@
     "deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia",
     "verify:sepolia": "hardhat verify --network sepolia",
     "check-balance": "hardhat run scripts/check-balance.js --network sepolia",
-    "verify-deployment": "hardhat run scripts/verify-deployment.js --network sepolia"
+    "verify-deployment": "hardhat run scripts/verify-deployment.js --network sepolia",
+    "mint": "hardhat run scripts/mint-tokens.js --network sepolia"
   },
   "keywords": [],
   "author": "",

@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+
+  html {
+    @apply antialiased;
+  }
+
+  body {
+    @apply bg-light-bg text-gray-900;
+    @apply dark:bg-dark-bg dark:text-white;
+    @apply transition-colors duration-300;
+  }
+
+  * {
+    @apply border-light-border dark:border-dark-border;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-accent-blue to-accent-purple;
+  }
+
+  .card-glass {
+    @apply backdrop-blur-xl bg-light-card/80 dark:bg-dark-card/80;
+    @apply border border-light-border dark:border-dark-border;
+  }
+}

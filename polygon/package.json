@@ -1,0 +1,35 @@
+{
+  "name": "multichain-dex-polygon",
+  "version": "1.0.0",
+  "description": "Multi-Chain DEX - Polygon Smart Contracts",
+  "main": "index.js",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "test:coverage": "hardhat coverage",
+    "deploy:local": "hardhat run scripts/deploy.js --network localhost",
+    "deploy:amoy": "hardhat run scripts/deploy.js --network polygonAmoy",
+    "deploy:polygon": "hardhat run scripts/deploy.js --network polygon",
+    "deploy:htlc:amoy": "hardhat run scripts/deploy-htlc.js --network polygonAmoy",
+    "check-balance": "hardhat run scripts/check-balance.js --network polygonAmoy",
+    "verify-deployment": "hardhat run scripts/verify-deployment.js --network polygonAmoy",
+    "verify:amoy": "hardhat run scripts/verify.js --network polygonAmoy",
+    "node": "hardhat node",
+    "clean": "hardhat clean"
+  },
+  "keywords": [
+    "dex",
+    "polygon",
+    "htlc",
+    "cross-chain",
+    "defi"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "@openzeppelin/contracts": "^5.0.1",
+    "dotenv": "^16.3.1",
+    "hardhat": "^2.19.4"
+  }
+}

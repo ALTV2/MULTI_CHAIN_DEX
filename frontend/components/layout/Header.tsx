@@ -9,7 +9,9 @@ import { cn } from '@/lib/utils/cn';
 const navItems = [
   { href: '/', label: 'Dashboard' },
   { href: '/trade', label: 'Trade' },
+  { href: '/swap', label: 'Cross-Chain' },
   { href: '/orders', label: 'My Orders' },
+  { href: '/profile', label: 'Profile' },
 ];
 
 export function Header() {

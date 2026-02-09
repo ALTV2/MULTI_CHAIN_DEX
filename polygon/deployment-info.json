@@ -1,0 +1,15 @@
+{
+  "network": "polygonAmoy",
+  "chainId": 80002,
+  "deployer": "0x7C26774eC3c296510f73abFB04E6e5892E372CF9",
+  "contracts": {
+    "TokenManager": "0x3241Fc31fe186660d467DDb1c841EAA7ecaea6C1",
+    "OrderBook": "0x22763589e1dd35d1FE86c51B0593E71677d72054",
+    "Trade": "0xaE925718310E5aDF3Fa2d98c186BfbBEcC0D7cD5",
+    "HTLC": "0x3d857Fc3510246A050817C29ea7C434ab7EbA81A",
+    "CrossChainOrderBook": "0x5F08Ec67A95C4394d577c90c65083AEb119BD922",
+    "TestTokenA": "0x711F11CfeD1D00f981BdA0E7B892dDa6f2EA47c5",
+    "TestTokenB": "0xCADe258E49B605cEaCe568A688893589D8E72907"
+  },
+  "deployedAt": "2026-02-07"
+}

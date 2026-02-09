@@ -1,33 +1,36 @@
 import { http, createConfig } from 'wagmi';
-import { sepolia } from 'wagmi/chains';
+import { sepolia, polygonAmoy } from 'wagmi/chains';
 import { injected, coinbaseWallet, walletConnect } from 'wagmi/connectors';
 
-// WalletConnect Project ID is optional - only needed for WalletConnect/mobile wallets
+// WalletConnect Project ID
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || '';
 
-// RPC URL: Try to read from environment, fallback to public RPC
-// In production, this should be loaded from ethereum/.env via build process
+// RPC URLs
 const sepoliaRpcUrl =
   process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL ||
-  'https://eth-sepolia.g.alchemy.com/v2/VPxg_-3LrpC7xW0yO-AGi'; // From ethereum/.env
+  'https://eth-sepolia.g.alchemy.com/v2/demo';
 
-// Build connectors list - include WalletConnect only if projectId is provided
-// Note: injected() covers MetaMask, Brave Wallet, and all browser extension wallets
+const polygonAmoyRpcUrl =
+  process.env.NEXT_PUBLIC_POLYGON_AMOY_RPC_URL ||
+  'https://rpc-amoy.polygon.technology';
+
+// Connectors - conditionally include walletConnect if projectId is set
 const connectors = [
   injected(),
   coinbaseWallet({ appName: 'Multi-Chain DEX' }),
+  ...(projectId ? [walletConnect({ projectId })] : []),
 ];
 
-// Add WalletConnect only if project ID is available
-if (projectId) {
-  connectors.push(walletConnect({ projectId }));
-}
-
 export const config = createConfig({
-  chains: [sepolia],
+  chains: [sepolia, polygonAmoy],
   connectors,
   transports: {
     [sepolia.id]: http(sepoliaRpcUrl),
+    [polygonAmoy.id]: http(polygonAmoyRpcUrl),
   },
   ssr: true,
 });
+
+// Export supported chains for use in components
+export const supportedChains = [sepolia, polygonAmoy] as const;
+export type SupportedChain = (typeof supportedChains)[number];

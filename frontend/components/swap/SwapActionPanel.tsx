@@ -12,6 +12,9 @@ import { updateSwap } from '@/lib/utils/swapStorage';
 import { getRequiredChain } from '@/lib/utils/swapPhase';
 import { getContractAddress, chainConfig, SupportedChainId } from '@/lib/contracts/addresses';
 import { isNativeToken } from '@/lib/constants/tokens';
+import { getSecretStrategy } from '@/lib/secrets';
+import { useSettingsStore } from '@/stores/useSettingsStore';
+import { buildSwapKey } from '@/lib/secrets/SecretStorageStrategy';
 import type { ActiveSwap } from '@/types/swap';
 
 interface SwapActionPanelProps {
@@ -151,6 +154,11 @@ function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
         hashlock = generateHashlock(secret);
         // CRITICAL: Save secret BEFORE creating HTLC
         updateSwap(address, meta.orderId, { secret, hashlock }, meta.sourceChainId);
+
+        // Also persist via the user's chosen secret storage strategy
+        const strategy = getSecretStrategy(useSettingsStore.getState().secretStorage);
+        const swapKey = buildSwapKey(address, meta.orderId, meta.sourceChainId);
+        await strategy.saveSecret(swapKey, secret);
       }
 
       // Step 2: Approve if needed
@@ -355,13 +363,14 @@ function CreatorWithdrawAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate:
   }, [isSuccess, onUpdate]);
 
   const handleWithdraw = async () => {
-    if (!address || !meta.secret || !meta.matcherHtlcSwapId) return;
+    const secret = meta.secret || recoveredSecret;
+    if (!address || !secret || !meta.matcherHtlcSwapId) return;
     setError(null);
 
     try {
       await withdraw(
         meta.matcherHtlcSwapId as `0x${string}`,
-        meta.secret as `0x${string}`
+        secret as `0x${string}`
       );
     } catch (err: any) {
       console.error('Creator withdraw failed:', err);
@@ -369,10 +378,32 @@ function CreatorWithdrawAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate:
     }
   };
 
-  if (!meta.secret) {
+  // Try to recover secret from strategy if not in swap meta
+  const [recoveredSecret, setRecoveredSecret] = useState<string | null>(null);
+  const [isRecovering, setIsRecovering] = useState(false);
+
+  useEffect(() => {
+    if (!meta.secret && address && !recoveredSecret && !isRecovering) {
+      setIsRecovering(true);
+      const strategy = getSecretStrategy(useSettingsStore.getState().secretStorage);
+      const swapKey = buildSwapKey(address, meta.orderId, meta.sourceChainId);
+      strategy.getSecret(swapKey).then((s) => {
+        if (s) setRecoveredSecret(s);
+        setIsRecovering(false);
+      }).catch(() => setIsRecovering(false));
+    }
+  }, [meta.secret, address, meta.orderId, meta.sourceChainId, recoveredSecret, isRecovering]);
+
+  const effectiveSecret = meta.secret || recoveredSecret;
+
+  if (isRecovering) {
+    return <WaitingMessage text="Looking up saved secret..." />;
+  }
+
+  if (!effectiveSecret) {
     return (
       <div className="p-2 rounded bg-red-500/10 text-red-400 text-xs">
-        Secret not found in local storage. Cannot withdraw.
+        Secret not found. Check your secret storage settings in Profile.
       </div>
     );
   }

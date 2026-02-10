@@ -92,4 +92,27 @@ public class SwapController {
         SwapHistoryResponse response = swapService.updateHtlcSwapId(swapId, htlcSwapId);
         return ResponseEntity.ok(response);
     }
+
+    @PostMapping("/{swapId}/secret")
+    @Operation(summary = "Store encrypted secret", description = "Store encrypted HTLC secret for safekeeping")
+    public ResponseEntity<Void> storeSecret(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable UUID swapId,
+            @RequestBody Map<String, String> body) {
+        String encryptedSecret = body.get("encryptedSecret");
+        swapService.storeEncryptedSecret(principal.getUserId(), swapId, encryptedSecret);
+        return ResponseEntity.ok().build();
+    }
+
+    @GetMapping("/{swapId}/secret")
+    @Operation(summary = "Get encrypted secret", description = "Retrieve encrypted HTLC secret")
+    public ResponseEntity<Map<String, String>> getSecret(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable UUID swapId) {
+        String secret = swapService.getEncryptedSecret(principal.getUserId(), swapId);
+        if (secret == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(Map.of("encryptedSecret", secret));
+    }
 }

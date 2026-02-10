@@ -4,7 +4,7 @@ import { type HTMLAttributes, forwardRef } from 'react';
 import { cn } from '@/lib/utils/cn';
 
 interface CardProps extends HTMLAttributes<HTMLDivElement> {
-  variant?: 'default' | 'glass';
+  variant?: 'default' | 'glass' | 'glass-strong' | 'interactive';
 }
 
 export const Card = forwardRef<HTMLDivElement, CardProps>(
@@ -14,6 +14,10 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(
         'bg-light-card dark:bg-dark-card border border-light-border dark:border-dark-border',
       glass:
         'bg-light-card/80 dark:bg-dark-card/80 backdrop-blur-xl border border-light-border dark:border-dark-border',
+      'glass-strong':
+        'bg-light-card/90 dark:bg-dark-card/90 backdrop-blur-2xl border border-light-border/50 dark:border-dark-border/50 shadow-xl shadow-black/5 dark:shadow-black/20',
+      interactive:
+        'bg-light-card dark:bg-dark-card border border-light-border dark:border-dark-border transition-all duration-300 hover:shadow-lg hover:shadow-black/5 dark:hover:shadow-black/20 hover:-translate-y-0.5',
     };
 
     return (

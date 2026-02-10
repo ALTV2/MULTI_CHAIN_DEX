@@ -2,7 +2,6 @@ package com.multichain.dex.service;
 
 import com.multichain.dex.domain.entity.SwapHistory;
 import com.multichain.dex.domain.entity.User;
-import com.multichain.dex.domain.enums.ChainType;
 import com.multichain.dex.domain.enums.SwapStatus;
 import com.multichain.dex.dto.request.CreateSwapRequest;
 import com.multichain.dex.dto.response.SwapHistoryResponse;
@@ -31,20 +30,20 @@ public class SwapService {
     @Transactional
     public SwapHistoryResponse createSwapRecord(UUID userId, CreateSwapRequest request) {
         User user = userRepository.findById(userId)
-            .orElseThrow(() -> new IllegalArgumentException("User not found"));
+                .orElseThrow(() -> new IllegalArgumentException("User not found"));
 
         SwapHistory swap = SwapHistory.builder()
-            .user(user)
-            .sourceChain(request.getSourceChain())
-            .targetChain(request.getTargetChain())
-            .sourceToken(request.getSourceToken())
-            .sourceAmount(request.getSourceAmount())
-            .targetToken(request.getTargetToken())
-            .targetAmount(request.getTargetAmount())
-            .hashlock(request.getHashlock())
-            .timelockExpiry(request.getTimelockExpiry())
-            .status(SwapStatus.PENDING)
-            .build();
+                .user(user)
+                .sourceChain(request.getSourceChain())
+                .targetChain(request.getTargetChain())
+                .sourceToken(request.getSourceToken())
+                .sourceAmount(request.getSourceAmount())
+                .targetToken(request.getTargetToken())
+                .targetAmount(request.getTargetAmount())
+                .hashlock(request.getHashlock())
+                .timelockExpiry(request.getTimelockExpiry())
+                .status(SwapStatus.PENDING)
+                .build();
 
         swap = swapHistoryRepository.save(swap);
         return toResponse(swap);
@@ -53,7 +52,7 @@ public class SwapService {
     @Transactional
     public SwapHistoryResponse updateSwapStatus(UUID swapId, SwapStatus status, String txHash, boolean isSourceTx) {
         SwapHistory swap = swapHistoryRepository.findById(swapId)
-            .orElseThrow(() -> new IllegalArgumentException("Swap not found"));
+                .orElseThrow(() -> new IllegalArgumentException("Swap not found"));
 
         swap.setStatus(status);
 
@@ -76,7 +75,7 @@ public class SwapService {
     @Transactional
     public SwapHistoryResponse updateHtlcSwapId(UUID swapId, String htlcSwapId) {
         SwapHistory swap = swapHistoryRepository.findById(swapId)
-            .orElseThrow(() -> new IllegalArgumentException("Swap not found"));
+                .orElseThrow(() -> new IllegalArgumentException("Swap not found"));
 
         swap.setHtlcSwapId(htlcSwapId);
         swap.setStatus(SwapStatus.HTLC_CREATED);
@@ -88,47 +87,45 @@ public class SwapService {
     @Transactional(readOnly = true)
     public Page<SwapHistoryResponse> getUserSwapHistory(UUID userId, Pageable pageable) {
         return swapHistoryRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable)
-            .map(this::toResponse);
+                .map(this::toResponse);
     }
 
     @Transactional(readOnly = true)
     public SwapHistoryResponse getSwapById(UUID swapId) {
         SwapHistory swap = swapHistoryRepository.findById(swapId)
-            .orElseThrow(() -> new IllegalArgumentException("Swap not found"));
+                .orElseThrow(() -> new IllegalArgumentException("Swap not found"));
         return toResponse(swap);
     }
 
     @Transactional(readOnly = true)
     public SwapHistoryResponse getSwapByHtlcId(String htlcSwapId) {
         SwapHistory swap = swapHistoryRepository.findByHtlcSwapId(htlcSwapId)
-            .orElseThrow(() -> new IllegalArgumentException("Swap not found"));
+                .orElseThrow(() -> new IllegalArgumentException("Swap not found"));
         return toResponse(swap);
     }
 
     @Transactional(readOnly = true)
     public List<SwapHistoryResponse> getActiveSwaps(UUID userId) {
         List<SwapStatus> activeStatuses = List.of(
-            SwapStatus.PENDING,
-            SwapStatus.HTLC_CREATED,
-            SwapStatus.HTLC_MATCHED
-        );
+                SwapStatus.PENDING,
+                SwapStatus.HTLC_CREATED,
+                SwapStatus.HTLC_MATCHED);
 
         return swapHistoryRepository.findByUserIdAndStatus(userId, SwapStatus.HTLC_CREATED).stream()
-            .map(this::toResponse)
-            .toList();
+                .map(this::toResponse)
+                .toList();
     }
 
     @Scheduled(fixedRate = 60000) // Every minute
     @Transactional
     public void checkExpiredSwaps() {
         List<SwapStatus> checkStatuses = List.of(
-            SwapStatus.PENDING,
-            SwapStatus.HTLC_CREATED,
-            SwapStatus.HTLC_MATCHED
-        );
+                SwapStatus.PENDING,
+                SwapStatus.HTLC_CREATED,
+                SwapStatus.HTLC_MATCHED);
 
         List<SwapHistory> expiredSwaps = swapHistoryRepository.findExpiredSwaps(
-            checkStatuses, LocalDateTime.now());
+                checkStatuses, LocalDateTime.now());
 
         for (SwapHistory swap : expiredSwaps) {
             swap.setStatus(SwapStatus.EXPIRED);
@@ -137,24 +134,49 @@ public class SwapService {
         }
     }
 
+    @Transactional
+    public void storeEncryptedSecret(UUID userId, UUID swapId, String encryptedSecret) {
+        SwapHistory swap = swapHistoryRepository.findById(swapId)
+                .orElseThrow(() -> new IllegalArgumentException("Swap not found"));
+
+        if (!swap.getUser().getId().equals(userId)) {
+            throw new IllegalArgumentException("Swap does not belong to user");
+        }
+
+        swap.setEncryptedSecret(encryptedSecret);
+        swapHistoryRepository.save(swap);
+    }
+
+    @Transactional(readOnly = true)
+    public String getEncryptedSecret(UUID userId, UUID swapId) {
+        SwapHistory swap = swapHistoryRepository.findById(swapId)
+                .orElseThrow(() -> new IllegalArgumentException("Swap not found"));
+
+        if (!swap.getUser().getId().equals(userId)) {
+            throw new IllegalArgumentException("Swap does not belong to user");
+        }
+
+        return swap.getEncryptedSecret();
+    }
+
     private SwapHistoryResponse toResponse(SwapHistory swap) {
         return SwapHistoryResponse.builder()
-            .id(swap.getId())
-            .htlcSwapId(swap.getHtlcSwapId())
-            .crossChainOrderId(swap.getCrossChainOrderId())
-            .sourceChain(swap.getSourceChain())
-            .targetChain(swap.getTargetChain())
-            .sourceToken(swap.getSourceToken())
-            .sourceAmount(swap.getSourceAmount())
-            .targetToken(swap.getTargetToken())
-            .targetAmount(swap.getTargetAmount())
-            .status(swap.getStatus())
-            .sourceTxHash(swap.getSourceTxHash())
-            .targetTxHash(swap.getTargetTxHash())
-            .hashlock(swap.getHashlock())
-            .timelockExpiry(swap.getTimelockExpiry())
-            .createdAt(swap.getCreatedAt())
-            .completedAt(swap.getCompletedAt())
-            .build();
+                .id(swap.getId())
+                .htlcSwapId(swap.getHtlcSwapId())
+                .crossChainOrderId(swap.getCrossChainOrderId())
+                .sourceChain(swap.getSourceChain())
+                .targetChain(swap.getTargetChain())
+                .sourceToken(swap.getSourceToken())
+                .sourceAmount(swap.getSourceAmount())
+                .targetToken(swap.getTargetToken())
+                .targetAmount(swap.getTargetAmount())
+                .status(swap.getStatus())
+                .sourceTxHash(swap.getSourceTxHash())
+                .targetTxHash(swap.getTargetTxHash())
+                .hashlock(swap.getHashlock())
+                .timelockExpiry(swap.getTimelockExpiry())
+                .createdAt(swap.getCreatedAt())
+                .completedAt(swap.getCompletedAt())
+                .build();
     }
 }

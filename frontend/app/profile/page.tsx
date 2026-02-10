@@ -1,36 +1,49 @@
 'use client';
 
-import { useState } from 'react';
-import { useAccount, useChainId, useBalance } from 'wagmi';
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { useAccount, useBalance, useChainId, useDisconnect } from 'wagmi';
 import { formatEther } from 'viem';
-import { Card } from '@/components/ui/Card';
+import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { Tabs, TabPanel } from '@/components/ui/Tabs';
 import { WalletList } from '@/components/profile/WalletList';
 import { SwapHistoryTable } from '@/components/profile/SwapHistoryTable';
+import { useCurrentUser } from '@/hooks/useAuth';
+import { useActiveSwaps } from '@/hooks/useActiveSwaps';
+import { useSettingsStore, type SecretStorageMode } from '@/stores/useSettingsStore';
+import { chainConfig, SupportedChainId, getSupportedChainIds } from '@/lib/contracts/addresses';
 import { supportedChains } from '@/lib/contracts/config';
-import { chainConfig, SupportedChainId } from '@/lib/contracts/addresses';
-
-type Tab = 'overview' | 'wallets' | 'history' | 'settings';
 
 export default function ProfilePage() {
+  const searchParams = useSearchParams();
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
   const { data: balance } = useBalance({ address });
-  const [activeTab, setActiveTab] = useState<Tab>('overview');
+  const { disconnect } = useDisconnect();
+  const { isAuthenticated } = useCurrentUser();
+  const { activeSwaps, historySwaps } = useActiveSwaps();
+  const initialTab = searchParams.get('tab') || 'overview';
+  const [activeTab, setActiveTab] = useState(initialTab);
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab) setActiveTab(tab);
+  }, [searchParams]);
 
   if (!isConnected) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <Card className="max-w-2xl mx-auto p-8 text-center">
-          <h1 className="text-2xl font-bold mb-4">Personal Cabinet</h1>
-          <p className="text-gray-400 mb-6">
-            Connect your wallet to access your personal cabinet.
-          </p>
-          <p className="text-sm text-gray-500">
-            View your balances, swap history, and manage your account.
-          </p>
-        </Card>
+      <div className="max-w-2xl mx-auto py-16 text-center">
+        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent-blue to-accent-purple flex items-center justify-center mx-auto mb-6">
+          <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+          </svg>
+        </div>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Profile</h1>
+        <p className="text-gray-500 dark:text-gray-400 mb-6">
+          Connect your wallet to access your profile and settings.
+        </p>
       </div>
     );
   }
@@ -38,210 +51,256 @@ export default function ProfilePage() {
   const currentChainConfig = chainConfig[chainId as SupportedChainId];
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-8">
+    <div className="max-w-6xl mx-auto space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-accent-blue to-accent-purple flex items-center justify-center shadow-lg shadow-accent-blue/20">
+            <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+          </div>
           <div>
-            <h1 className="text-3xl font-bold">Personal Cabinet</h1>
-            <p className="text-gray-400 mt-1">
-              Manage your wallets and view swap history
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Profile</h1>
+            <p className="text-sm text-gray-500 dark:text-gray-400 font-mono">
+              {address?.slice(0, 8)}...{address?.slice(-6)}
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <Badge variant="success">Connected</Badge>
-            <span
-              className="px-3 py-1 rounded text-sm font-medium"
-              style={{ backgroundColor: `${currentChainConfig?.color}20`, color: currentChainConfig?.color }}
-            >
-              {currentChainConfig?.shortName}
-            </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {isAuthenticated && <Badge variant="success" dot>Signed In</Badge>}
+          <Badge
+            variant="info"
+            style={{ backgroundColor: `${currentChainConfig?.color}20`, color: currentChainConfig?.color }}
+          >
+            {currentChainConfig?.shortName}
+          </Badge>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <Tabs
+        tabs={[
+          { id: 'overview', label: 'Overview' },
+          { id: 'wallets', label: 'Wallets' },
+          { id: 'history', label: 'Swap History' },
+          { id: 'settings', label: 'Settings' },
+        ]}
+        activeTab={activeTab}
+        onChange={setActiveTab}
+      />
+
+      {/* Tab content */}
+      {activeTab === 'overview' && (
+        <TabPanel>
+          <div className="grid md:grid-cols-3 gap-6">
+            <Card variant="glass">
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-500">Balance</span>
+                  <span className="text-xs" style={{ color: currentChainConfig?.color }}>
+                    {currentChainConfig?.shortName}
+                  </span>
+                </div>
+                <div className="text-3xl font-bold text-gray-900 dark:text-white">
+                  {balance ? parseFloat(formatEther(balance.value)).toFixed(4) : '0'}
+                  <span className="text-lg text-gray-400 ml-1">{balance?.symbol}</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card variant="glass">
+              <CardContent className="space-y-3">
+                <span className="text-sm text-gray-500">Active Swaps</span>
+                <div className="text-3xl font-bold text-accent-blue">{activeSwaps.length}</div>
+              </CardContent>
+            </Card>
+
+            <Card variant="glass">
+              <CardContent className="space-y-3">
+                <span className="text-sm text-gray-500">Completed</span>
+                <div className="text-3xl font-bold text-accent-green">{historySwaps.length}</div>
+              </CardContent>
+            </Card>
+
+            {/* Chain balances */}
+            <Card className="md:col-span-3">
+              <CardContent>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Chain Balances</h3>
+                <div className="grid md:grid-cols-2 gap-3">
+                  {supportedChains.map((chain) => {
+                    const config = chainConfig[chain.id as SupportedChainId];
+                    return (
+                      <ChainBalanceCard
+                        key={chain.id}
+                        chainId={chain.id}
+                        address={address!}
+                        isActive={chain.id === chainId}
+                        config={config}
+                      />
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
           </div>
-        </div>
+        </TabPanel>
+      )}
 
-        {/* Tabs */}
-        <div className="flex gap-4 mb-6 border-b border-gray-700">
-          {[
-            { id: 'overview', label: 'Overview' },
-            { id: 'wallets', label: 'Wallets' },
-            { id: 'history', label: 'Swap History' },
-            { id: 'settings', label: 'Settings' },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              className={`pb-3 px-2 text-sm font-medium transition-colors ${
-                activeTab === tab.id
-                  ? 'text-white border-b-2 border-blue-500'
-                  : 'text-gray-400 hover:text-white'
-              }`}
-              onClick={() => setActiveTab(tab.id as Tab)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+      {activeTab === 'wallets' && (
+        <TabPanel>
+          <WalletList />
+        </TabPanel>
+      )}
 
-        {/* Content */}
-        {activeTab === 'overview' && (
-          <OverviewTab address={address!} balance={balance} chainId={chainId} />
+      {activeTab === 'history' && (
+        <TabPanel>
+          <SwapHistoryTable />
+        </TabPanel>
+      )}
+
+      {activeTab === 'settings' && (
+        <TabPanel>
+          <SettingsPanel onDisconnect={() => disconnect()} />
+        </TabPanel>
+      )}
+    </div>
+  );
+}
+
+function ChainBalanceCard({
+  chainId,
+  address,
+  isActive,
+  config,
+}: {
+  chainId: number;
+  address: `0x${string}`;
+  isActive: boolean;
+  config: any;
+}) {
+  const { data: balance, isLoading } = useBalance({ address, chainId });
+
+  return (
+    <div className={`flex items-center justify-between p-4 rounded-xl transition-colors ${
+      isActive
+        ? 'bg-light-hover dark:bg-dark-hover ring-1 ring-accent-blue/30'
+        : 'bg-light-hover/50 dark:bg-dark-hover/50'
+    }`}>
+      <div className="flex items-center gap-3">
+        <div
+          className="w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold"
+          style={{ backgroundColor: `${config?.color}15`, color: config?.color }}
+        >
+          {config?.shortName.charAt(0)}
+        </div>
+        <div>
+          <div className="text-sm font-medium text-gray-900 dark:text-white">{config?.name}</div>
+          {isActive && <span className="text-xs text-accent-green">Connected</span>}
+        </div>
+      </div>
+      <div className="text-right">
+        {isLoading ? (
+          <div className="h-6 w-20 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+        ) : (
+          <span className="text-sm font-semibold text-gray-900 dark:text-white">
+            {balance ? parseFloat(formatEther(balance.value)).toFixed(4) : '0'}
+            <span className="text-gray-400 ml-1">{balance?.symbol}</span>
+          </span>
         )}
-        {activeTab === 'wallets' && <WalletList />}
-        {activeTab === 'history' && <SwapHistoryTable />}
-        {activeTab === 'settings' && <SettingsTab />}
       </div>
     </div>
   );
 }
 
-function OverviewTab({
-  address,
-  balance,
-  chainId,
-}: {
-  address: `0x${string}`;
-  balance: any;
-  chainId: number;
-}) {
-  return (
-    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-      {/* Wallet Card */}
-      <Card className="p-6">
-        <h3 className="text-lg font-semibold mb-4">Connected Wallet</h3>
-        <div className="space-y-3">
-          <div>
-            <p className="text-xs text-gray-500 mb-1">Address</p>
-            <p className="text-sm font-mono truncate">{address}</p>
-          </div>
-          <div>
-            <p className="text-xs text-gray-500 mb-1">Balance</p>
-            <p className="text-2xl font-bold">
-              {balance ? parseFloat(formatEther(balance.value)).toFixed(4) : '0'}{' '}
-              <span className="text-gray-400 text-lg">{balance?.symbol}</span>
-            </p>
-          </div>
-        </div>
-      </Card>
+function SettingsPanel({ onDisconnect }: { onDisconnect: () => void }) {
+  const { secretStorage, setSecretStorage, defaultTargetWallets } = useSettingsStore();
 
-      {/* Multi-Chain Balances */}
-      <Card className="p-6">
-        <h3 className="text-lg font-semibold mb-4">Chain Balances</h3>
-        <div className="space-y-3">
-          {supportedChains.map((chain) => {
-            const config = chainConfig[chain.id as SupportedChainId];
-            return (
-              <div key={chain.id} className="flex items-center justify-between p-3 rounded-lg bg-gray-800/50">
-                <div className="flex items-center gap-2">
-                  <span
-                    className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: config?.color }}
-                  />
-                  <span className="text-sm">{config?.shortName}</span>
-                </div>
-                <span className="text-sm text-gray-400">
-                  {chain.id === chainId && balance
-                    ? `${parseFloat(formatEther(balance.value)).toFixed(4)} ${balance.symbol}`
-                    : '--'}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </Card>
+  const secretOptions: { value: SecretStorageMode; label: string; desc: string }[] = [
+    { value: 'local', label: 'Browser Storage', desc: 'Saved in your browser localStorage. Cleared if you clear browser data.' },
+    { value: 'database', label: 'Database', desc: 'Encrypted and stored on the server. Requires sign-in.' },
+    { value: 'show_once', label: 'Show Once', desc: 'Displayed once — you must save it yourself. Most secure.' },
+  ];
 
-      {/* Quick Stats */}
-      <Card className="p-6">
-        <h3 className="text-lg font-semibold mb-4">Activity</h3>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-gray-400">Total Swaps</span>
-            <span className="font-semibold">0</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-gray-400">Active Orders</span>
-            <span className="font-semibold">0</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-gray-400">Pending Swaps</span>
-            <span className="font-semibold">0</span>
-          </div>
-        </div>
-      </Card>
-
-      {/* Recent Activity */}
-      <Card className="p-6 md:col-span-2 lg:col-span-3">
-        <h3 className="text-lg font-semibold mb-4">Recent Activity</h3>
-        <div className="text-center py-8 text-gray-500">
-          <svg className="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-          </svg>
-          <p>No recent activity</p>
-          <p className="text-sm mt-1">Your swap history will appear here</p>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-function SettingsTab() {
   return (
     <div className="max-w-2xl space-y-6">
-      <Card className="p-6">
-        <h3 className="text-lg font-semibold mb-4">Preferences</h3>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium">Dark Mode</p>
-              <p className="text-sm text-gray-400">Use dark theme</p>
-            </div>
-            <Button variant="secondary" size="sm">
-              Enabled
-            </Button>
-          </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium">Notifications</p>
-              <p className="text-sm text-gray-400">Receive swap notifications</p>
-            </div>
-            <Button variant="secondary" size="sm">
-              Configure
-            </Button>
-          </div>
-        </div>
-      </Card>
-
-      <Card className="p-6">
-        <h3 className="text-lg font-semibold mb-4">Security</h3>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium">Transaction Signing</p>
-              <p className="text-sm text-gray-400">Always confirm transactions in wallet</p>
-            </div>
-            <Badge variant="success">Enabled</Badge>
-          </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium">Auto-lock</p>
-              <p className="text-sm text-gray-400">Disconnect wallet after inactivity</p>
-            </div>
-            <Button variant="secondary" size="sm">
-              Configure
-            </Button>
-          </div>
-        </div>
-      </Card>
-
-      <Card className="p-6 border-red-500/20">
-        <h3 className="text-lg font-semibold mb-4 text-red-400">Danger Zone</h3>
-        <div className="flex items-center justify-between">
+      {/* Secret Storage */}
+      <Card>
+        <CardContent className="space-y-4">
           <div>
-            <p className="font-medium">Disconnect Wallet</p>
-            <p className="text-sm text-gray-400">Remove wallet connection from this dApp</p>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">HTLC Secret Storage</h3>
+            <p className="text-sm text-gray-500 mt-1">
+              Choose how your HTLC secrets are stored. Secrets are required to complete swaps.
+            </p>
           </div>
-          <Button variant="secondary" size="sm" className="border-red-500/50 text-red-400 hover:bg-red-500/10">
-            Disconnect
-          </Button>
-        </div>
+          <div className="space-y-2">
+            {secretOptions.map((opt) => (
+              <label
+                key={opt.value}
+                className={`flex items-start gap-3 p-4 rounded-xl border cursor-pointer transition-colors ${
+                  secretStorage === opt.value
+                    ? 'border-accent-blue bg-accent-blue/5'
+                    : 'border-light-border dark:border-dark-border hover:bg-light-hover dark:hover:bg-dark-hover'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="secretStorage"
+                  value={opt.value}
+                  checked={secretStorage === opt.value}
+                  onChange={() => setSecretStorage(opt.value)}
+                  className="mt-1 w-4 h-4 text-accent-blue focus:ring-accent-blue border-gray-300 dark:border-gray-600"
+                />
+                <div>
+                  <div className="text-sm font-medium text-gray-900 dark:text-white">{opt.label}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{opt.desc}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Default Target Wallets */}
+      <Card>
+        <CardContent className="space-y-4">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Default Target Wallets</h3>
+            <p className="text-sm text-gray-500 mt-1">
+              Pre-fill target wallet addresses when creating or matching orders.
+              You can manage these in the Wallets tab.
+            </p>
+          </div>
+          {Object.keys(defaultTargetWallets).length === 0 ? (
+            <p className="text-sm text-gray-400 italic">No default wallets configured.</p>
+          ) : (
+            <div className="space-y-2">
+              {Object.entries(defaultTargetWallets).map(([chainId, addr]) => (
+                <div key={chainId} className="flex items-center justify-between p-3 bg-light-hover dark:bg-dark-hover rounded-xl">
+                  <div>
+                    <span className="text-xs text-gray-400">Chain {chainId}</span>
+                    <p className="text-sm font-mono text-gray-900 dark:text-white">{addr.slice(0, 10)}...{addr.slice(-6)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Disconnect */}
+      <Card className="border-accent-red/20">
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-medium text-gray-900 dark:text-white">Disconnect Wallet</h3>
+              <p className="text-sm text-gray-500 mt-0.5">Remove wallet connection from this app</p>
+            </div>
+            <Button variant="danger" size="sm" onClick={onDisconnect}>
+              Disconnect
+            </Button>
+          </div>
+        </CardContent>
       </Card>
     </div>
   );

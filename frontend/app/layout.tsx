@@ -23,7 +23,7 @@ export default function RootLayout({
       <body className={inter.className}>
         <ThemeProvider>
           <Web3Provider>
-            <div className="min-h-screen flex flex-col">
+            <div className="min-h-screen flex flex-col bg-mesh">
               <Header />
               <main className="flex-1 container mx-auto px-4 py-8">
                 {children}

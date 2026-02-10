@@ -77,6 +77,9 @@ public class SwapHistory {
     @Column(columnDefinition = "TEXT")
     private String errorMessage;
 
+    @Column(columnDefinition = "TEXT")
+    private String encryptedSecret;
+
     @CreationTimestamp
     @Column(updatable = false)
     private LocalDateTime createdAt;

@@ -31,16 +31,16 @@ export const contractAddresses = {
 // Chain metadata
 export const chainConfig = {
   [sepolia.id]: {
-    name: 'Ethereum Sepolia',
-    shortName: 'Sepolia',
+    name: 'Ethereum (Sepolia)',
+    shortName: 'Ethereum',
     nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 },
     blockExplorer: 'https://sepolia.etherscan.io',
     color: '#627EEA',
     icon: '/chains/ethereum.svg',
   },
   [polygonAmoy.id]: {
-    name: 'Polygon Amoy',
-    shortName: 'Amoy',
+    name: 'Polygon (Amoy)',
+    shortName: 'Polygon',
     nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 },
     blockExplorer: 'https://amoy.polygonscan.com',
     color: '#8247E5',

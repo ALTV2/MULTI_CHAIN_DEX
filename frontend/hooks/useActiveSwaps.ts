@@ -2,50 +2,20 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAccount } from 'wagmi';
-import { createPublicClient, http } from 'viem';
-import { sepolia, polygonAmoy } from 'wagmi/chains';
 import { HTLC_ABI } from '@/lib/contracts/abis/HTLC';
 import { CROSS_CHAIN_ORDER_BOOK_ABI } from '@/lib/contracts/abis/CrossChainOrderBook';
 import { getContractAddress, getSupportedChainIds } from '@/lib/contracts/addresses';
 import { getSwaps, getSwap, saveSwap, updateSwap } from '@/lib/utils/swapStorage';
 import { determineSwapPhase } from '@/lib/utils/swapPhase';
+import { getPublicClient } from '@/lib/utils/rpcClient';
 import type { StoredSwapMeta, ActiveSwap } from '@/types/swap';
-
-const STATUS_MAP: Record<number, string> = {
-  0: 'Empty',
-  1: 'Active',
-  2: 'Withdrawn',
-  3: 'Refunded',
-};
-
-const ORDER_STATUS_MAP: Record<number, string> = {
-  0: 'Active',
-  1: 'Matched',
-  2: 'Completed',
-  3: 'Cancelled',
-  4: 'Expired',
-};
-
-const chains: Record<number, (typeof sepolia) | (typeof polygonAmoy)> = {
-  [sepolia.id]: sepolia,
-  [polygonAmoy.id]: polygonAmoy,
-};
-
-function getClient(chainId: number) {
-  const chain = chains[chainId];
-  if (!chain) throw new Error(`Unsupported chain: ${chainId}`);
-
-  const rpcUrl = chainId === sepolia.id
-    ? (process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL || 'https://eth-sepolia.g.alchemy.com/v2/demo')
-    : (process.env.NEXT_PUBLIC_POLYGON_AMOY_RPC_URL || 'https://rpc-amoy.polygon.technology');
-
-  return createPublicClient({
-    chain,
-    transport: http(rpcUrl),
-  });
-}
-
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+import {
+  HTLC_STATUS_MAP,
+  ORDER_STATUS_MAP,
+  SWAP_SCAN_COOLDOWN_MS,
+  AUTO_REFRESH_INTERVAL_MS,
+  ZERO_ADDRESS,
+} from '@/lib/constants/swap';
 
 /**
  * Scan CCOB contracts on all chains to discover orders where the wallet is
@@ -60,7 +30,7 @@ async function scanBlockchainForSwaps(walletAddress: string): Promise<number> {
 
   for (const chainId of chainIds) {
     try {
-      const client = getClient(chainId);
+      const client = getPublicClient(chainId);
       const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook');
 
       // 1. Find orders where user is creator (using getOrdersByCreator)
@@ -186,7 +156,7 @@ async function scanBlockchainForSwaps(walletAddress: string): Promise<number> {
  * When no hashlock filter: prefers Active non-expired HTLCs over old expired ones.
  */
 async function discoverHTLCSwap(
-  client: ReturnType<typeof getClient>,
+  client: ReturnType<typeof getPublicClient>,
   chainId: number,
   initiator: string,
   participant: string,
@@ -218,7 +188,7 @@ async function discoverHTLCSwap(
           args: [swapIds[i]],
         }) as any;
 
-        const status = STATUS_MAP[swapData.status] || 'Empty';
+        const status = HTLC_STATUS_MAP[swapData.status] || 'Empty';
         if (status === 'Empty' || status === 'Refunded') continue;
 
         if (swapData.participant.toLowerCase() !== lowerParticipant) continue;
@@ -264,8 +234,8 @@ async function discoverHTLCSwap(
 
 async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string): Promise<ActiveSwap> {
   try {
-    const sourceClient = getClient(meta.sourceChainId);
-    const targetClient = getClient(meta.targetChainId);
+    const sourceClient = getPublicClient(meta.sourceChainId);
+    const targetClient = getPublicClient(meta.targetChainId);
     const updates: Partial<StoredSwapMeta> = {};
 
     // Step 1: Fetch CCOB order status from source chain, sync matcher
@@ -296,20 +266,26 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
 
     if (!meta.creatorHtlcSwapId && meta.creator && meta.matcher) {
       // Scan on-chain: creator created an HTLC on source chain with matcher as participant
+      const hashlockFilter = meta.hashlock || undefined;
       const found = await discoverHTLCSwap(
         sourceClient, meta.sourceChainId,
         meta.creator, meta.matcher,
-        meta.hashlock || undefined // match by hashlock if we have it
+        hashlockFilter
       );
       if (found) {
-        updates.creatorHtlcSwapId = found.swapId;
-        meta = { ...meta, creatorHtlcSwapId: found.swapId };
-        creatorHtlcStatus = found.status;
-        creatorHtlcTimelock = found.timelock;
-        // Also sync hashlock from on-chain
-        if (!meta.hashlock || meta.hashlock === '') {
-          updates.hashlock = found.hashlock;
-          meta = { ...meta, hashlock: found.hashlock };
+        // When no hashlock filter was used, skip expired HTLCs to avoid matching
+        // old swaps from previous interactions between the same addresses
+        const isExpired = found.timelock <= BigInt(Math.floor(Date.now() / 1000));
+        if (hashlockFilter || !isExpired) {
+          updates.creatorHtlcSwapId = found.swapId;
+          meta = { ...meta, creatorHtlcSwapId: found.swapId };
+          creatorHtlcStatus = found.status;
+          creatorHtlcTimelock = found.timelock;
+          // Sync hashlock from on-chain if missing locally
+          if (!meta.hashlock || meta.hashlock === '') {
+            updates.hashlock = found.hashlock;
+            meta = { ...meta, hashlock: found.hashlock };
+          }
         }
       }
     }
@@ -324,7 +300,7 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
           functionName: 'getSwap',
           args: [meta.creatorHtlcSwapId as `0x${string}`],
         }) as any;
-        creatorHtlcStatus = STATUS_MAP[swapData.status] || 'Empty';
+        creatorHtlcStatus = HTLC_STATUS_MAP[swapData.status] || 'Empty';
         creatorHtlcTimelock = swapData.timelock;
         // Sync hashlock from on-chain if missing
         if ((!meta.hashlock || meta.hashlock === '') && swapData.hashlock) {
@@ -365,7 +341,7 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
           functionName: 'getSwap',
           args: [meta.matcherHtlcSwapId as `0x${string}`],
         }) as any;
-        matcherHtlcStatus = STATUS_MAP[swapData.status] || 'Empty';
+        matcherHtlcStatus = HTLC_STATUS_MAP[swapData.status] || 'Empty';
         matcherHtlcTimelock = swapData.timelock;
       } catch {
         // HTLC might not exist
@@ -423,7 +399,7 @@ export function useActiveSwaps() {
     try {
       // Run blockchain scan if: first load, forced, or 30+ seconds since last scan
       const now = Date.now();
-      const shouldScan = forceNextScan.current || (now - lastScanTime.current > 30000);
+      const shouldScan = forceNextScan.current || (now - lastScanTime.current > SWAP_SCAN_COOLDOWN_MS);
 
       if (shouldScan) {
         try {
@@ -465,7 +441,7 @@ export function useActiveSwaps() {
   useEffect(() => {
     const interval = setInterval(() => {
       setLastRefresh(Date.now());
-    }, 15000);
+    }, AUTO_REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
   }, []);
 

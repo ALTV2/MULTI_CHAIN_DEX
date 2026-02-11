@@ -12,6 +12,7 @@ import { getTokenByAddress } from '@/lib/constants/tokens';
 import { saveSwap } from '@/lib/utils/swapStorage';
 import { formatUnits } from 'viem';
 import { toast } from 'sonner';
+import { ZERO_BYTES32 } from '@/lib/constants/swap';
 
 interface MatchOrderModalProps {
   open: boolean;
@@ -73,9 +74,8 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
       return;
     }
 
-    // Use a placeholder htlcSwapId for now (will be set when HTLC is created)
-    const placeholderSwapId = '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`;
-    matchOrder(order.id, placeholderSwapId);
+    // Placeholder — real htlcSwapId is set when the HTLC is created on-chain
+    matchOrder(order.id, ZERO_BYTES32 as `0x${string}`);
   }
 
   return (

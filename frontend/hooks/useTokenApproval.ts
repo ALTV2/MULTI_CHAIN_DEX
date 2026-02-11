@@ -47,10 +47,11 @@ export function useTokenApproval(
       !isNativeToken(tokenAddress),
   });
 
-  // Wait for approval transaction
+  // Wait for approval transaction (only when txHash is available)
   const { isLoading: isWaiting, isSuccess: isConfirmed } =
     useWaitForTransactionReceipt({
       hash: txHash,
+      query: { enabled: !!txHash },
     });
 
   // Approve mutation

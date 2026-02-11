@@ -154,7 +154,7 @@ class SwapServiceTest {
 
             // When
             SwapHistoryResponse response = swapService.updateSwapStatus(
-                swapId, SwapStatus.HTLC_MATCHED, txHash, true);
+                userId, swapId, SwapStatus.HTLC_MATCHED, txHash, true);
 
             // Then
             assertThat(response.getStatus()).isEqualTo(SwapStatus.HTLC_MATCHED);
@@ -173,7 +173,7 @@ class SwapServiceTest {
             when(swapHistoryRepository.save(any(SwapHistory.class))).thenAnswer(i -> i.getArgument(0));
 
             // When
-            swapService.updateSwapStatus(swapId, SwapStatus.HTLC_MATCHED, txHash, false);
+            swapService.updateSwapStatus(userId, swapId, SwapStatus.HTLC_MATCHED, txHash, false);
 
             // Then
             ArgumentCaptor<SwapHistory> swapCaptor = ArgumentCaptor.forClass(SwapHistory.class);
@@ -189,7 +189,7 @@ class SwapServiceTest {
             when(swapHistoryRepository.save(any(SwapHistory.class))).thenAnswer(i -> i.getArgument(0));
 
             // When
-            swapService.updateSwapStatus(swapId, SwapStatus.WITHDRAWN, null, false);
+            swapService.updateSwapStatus(userId, swapId, SwapStatus.WITHDRAWN, null, false);
 
             // Then
             ArgumentCaptor<SwapHistory> swapCaptor = ArgumentCaptor.forClass(SwapHistory.class);
@@ -205,7 +205,7 @@ class SwapServiceTest {
             when(swapHistoryRepository.save(any(SwapHistory.class))).thenAnswer(i -> i.getArgument(0));
 
             // When
-            swapService.updateSwapStatus(swapId, SwapStatus.REFUNDED, null, false);
+            swapService.updateSwapStatus(userId, swapId, SwapStatus.REFUNDED, null, false);
 
             // Then
             ArgumentCaptor<SwapHistory> swapCaptor = ArgumentCaptor.forClass(SwapHistory.class);
@@ -220,7 +220,7 @@ class SwapServiceTest {
             when(swapHistoryRepository.findById(swapId)).thenReturn(Optional.empty());
 
             // When/Then
-            assertThatThrownBy(() -> swapService.updateSwapStatus(swapId, SwapStatus.WITHDRAWN, null, false))
+            assertThatThrownBy(() -> swapService.updateSwapStatus(userId, swapId, SwapStatus.WITHDRAWN, null, false))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Swap not found");
         }
@@ -247,7 +247,7 @@ class SwapServiceTest {
             when(swapHistoryRepository.save(any(SwapHistory.class))).thenAnswer(i -> i.getArgument(0));
 
             // When
-            SwapHistoryResponse response = swapService.updateHtlcSwapId(swapId, htlcSwapId);
+            SwapHistoryResponse response = swapService.updateHtlcSwapId(userId, swapId, htlcSwapId);
 
             // Then
             assertThat(response.getHtlcSwapId()).isEqualTo(htlcSwapId);
@@ -317,7 +317,7 @@ class SwapServiceTest {
             when(swapHistoryRepository.findById(swapId)).thenReturn(Optional.of(swap));
 
             // When
-            SwapHistoryResponse response = swapService.getSwapById(swapId);
+            SwapHistoryResponse response = swapService.getSwapById(userId, swapId);
 
             // Then
             assertThat(response.getId()).isEqualTo(swapId);
@@ -332,7 +332,7 @@ class SwapServiceTest {
             when(swapHistoryRepository.findById(swapId)).thenReturn(Optional.empty());
 
             // When/Then
-            assertThatThrownBy(() -> swapService.getSwapById(swapId))
+            assertThatThrownBy(() -> swapService.getSwapById(userId, swapId))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Swap not found");
         }

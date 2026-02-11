@@ -15,6 +15,7 @@ import { useActiveSwaps } from '@/hooks/useActiveSwaps';
 import { useSettingsStore, type SecretStorageMode } from '@/stores/useSettingsStore';
 import { chainConfig, SupportedChainId, getSupportedChainIds } from '@/lib/contracts/addresses';
 import { supportedChains } from '@/lib/contracts/config';
+import { useTranslation } from '@/hooks/useTranslation';
 
 export default function ProfilePage() {
   const searchParams = useSearchParams();
@@ -24,6 +25,7 @@ export default function ProfilePage() {
   const { disconnect } = useDisconnect();
   const { isAuthenticated } = useCurrentUser();
   const { activeSwaps, historySwaps } = useActiveSwaps();
+  const { t } = useTranslation();
   const initialTab = searchParams.get('tab') || 'overview';
   const [activeTab, setActiveTab] = useState(initialTab);
 
@@ -40,9 +42,9 @@ export default function ProfilePage() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
           </svg>
         </div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Profile</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{t('profile.connectWallet')}</h1>
         <p className="text-gray-500 dark:text-gray-400 mb-6">
-          Connect your wallet to access your profile and settings.
+          {t('profile.connectWalletDesc')}
         </p>
       </div>
     );
@@ -61,14 +63,14 @@ export default function ProfilePage() {
             </svg>
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Profile</h1>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{t('profile.title')}</h1>
             <p className="text-sm text-gray-500 dark:text-gray-400 font-mono">
               {address?.slice(0, 8)}...{address?.slice(-6)}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {isAuthenticated && <Badge variant="success" dot>Signed In</Badge>}
+          {isAuthenticated && <Badge variant="success" dot>{t('profile.signedIn')}</Badge>}
           <Badge
             variant="info"
             style={{ backgroundColor: `${currentChainConfig?.color}20`, color: currentChainConfig?.color }}
@@ -81,10 +83,10 @@ export default function ProfilePage() {
       {/* Tabs */}
       <Tabs
         tabs={[
-          { id: 'overview', label: 'Overview' },
-          { id: 'wallets', label: 'Wallets' },
-          { id: 'history', label: 'Swap History' },
-          { id: 'settings', label: 'Settings' },
+          { id: 'overview', label: t('profile.tabs.overview') },
+          { id: 'wallets', label: t('profile.tabs.wallets') },
+          { id: 'history', label: t('profile.tabs.history') },
+          { id: 'settings', label: t('profile.tabs.settings') },
         ]}
         activeTab={activeTab}
         onChange={setActiveTab}
@@ -97,7 +99,7 @@ export default function ProfilePage() {
             <Card variant="glass">
               <CardContent className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-500">Balance</span>
+                  <span className="text-sm text-gray-500">{t('profile.balance')}</span>
                   <span className="text-xs" style={{ color: currentChainConfig?.color }}>
                     {currentChainConfig?.shortName}
                   </span>
@@ -111,14 +113,14 @@ export default function ProfilePage() {
 
             <Card variant="glass">
               <CardContent className="space-y-3">
-                <span className="text-sm text-gray-500">Active Swaps</span>
+                <span className="text-sm text-gray-500">{t('profile.activeSwaps')}</span>
                 <div className="text-3xl font-bold text-accent-blue">{activeSwaps.length}</div>
               </CardContent>
             </Card>
 
             <Card variant="glass">
               <CardContent className="space-y-3">
-                <span className="text-sm text-gray-500">Completed</span>
+                <span className="text-sm text-gray-500">{t('profile.completed')}</span>
                 <div className="text-3xl font-bold text-accent-green">{historySwaps.length}</div>
               </CardContent>
             </Card>
@@ -126,7 +128,7 @@ export default function ProfilePage() {
             {/* Chain balances */}
             <Card className="md:col-span-3">
               <CardContent>
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Chain Balances</h3>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">{t('profile.chainBalances')}</h3>
                 <div className="grid md:grid-cols-2 gap-3">
                   {supportedChains.map((chain) => {
                     const config = chainConfig[chain.id as SupportedChainId];
@@ -180,6 +182,7 @@ function ChainBalanceCard({
   config: any;
 }) {
   const { data: balance, isLoading } = useBalance({ address, chainId });
+  const { t } = useTranslation();
 
   return (
     <div className={`flex items-center justify-between p-4 rounded-xl transition-colors ${
@@ -196,7 +199,7 @@ function ChainBalanceCard({
         </div>
         <div>
           <div className="text-sm font-medium text-gray-900 dark:text-white">{config?.name}</div>
-          {isActive && <span className="text-xs text-accent-green">Connected</span>}
+          {isActive && <span className="text-xs text-accent-green">{t('profile.connected')}</span>}
         </div>
       </div>
       <div className="text-right">
@@ -215,11 +218,12 @@ function ChainBalanceCard({
 
 function SettingsPanel({ onDisconnect }: { onDisconnect: () => void }) {
   const { secretStorage, setSecretStorage, defaultTargetWallets } = useSettingsStore();
+  const { t } = useTranslation();
 
   const secretOptions: { value: SecretStorageMode; label: string; desc: string }[] = [
-    { value: 'local', label: 'Browser Storage', desc: 'Saved in your browser localStorage. Cleared if you clear browser data.' },
-    { value: 'database', label: 'Database', desc: 'Encrypted and stored on the server. Requires sign-in.' },
-    { value: 'show_once', label: 'Show Once', desc: 'Displayed once — you must save it yourself. Most secure.' },
+    { value: 'local', label: t('profile.settings.localStorage'), desc: t('profile.settings.localStorageDesc') },
+    { value: 'database', label: t('profile.settings.database'), desc: t('profile.settings.databaseDesc') },
+    { value: 'show_once', label: t('profile.settings.showOnce'), desc: t('profile.settings.showOnceDesc') },
   ];
 
   return (
@@ -228,9 +232,9 @@ function SettingsPanel({ onDisconnect }: { onDisconnect: () => void }) {
       <Card>
         <CardContent className="space-y-4">
           <div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">HTLC Secret Storage</h3>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{t('profile.settings.secretStorage')}</h3>
             <p className="text-sm text-gray-500 mt-1">
-              Choose how your HTLC secrets are stored. Secrets are required to complete swaps.
+              {t('profile.settings.secretStorageDesc')}
             </p>
           </div>
           <div className="space-y-2">
@@ -265,14 +269,13 @@ function SettingsPanel({ onDisconnect }: { onDisconnect: () => void }) {
       <Card>
         <CardContent className="space-y-4">
           <div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Default Target Wallets</h3>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{t('profile.settings.targetWallets')}</h3>
             <p className="text-sm text-gray-500 mt-1">
-              Pre-fill target wallet addresses when creating or matching orders.
-              You can manage these in the Wallets tab.
+              {t('profile.settings.targetWalletsDesc')}
             </p>
           </div>
           {Object.keys(defaultTargetWallets).length === 0 ? (
-            <p className="text-sm text-gray-400 italic">No default wallets configured.</p>
+            <p className="text-sm text-gray-400 italic">{t('profile.settings.noWallets')}</p>
           ) : (
             <div className="space-y-2">
               {Object.entries(defaultTargetWallets).map(([chainId, addr]) => (
@@ -293,8 +296,8 @@ function SettingsPanel({ onDisconnect }: { onDisconnect: () => void }) {
         <CardContent>
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="font-medium text-gray-900 dark:text-white">Disconnect Wallet</h3>
-              <p className="text-sm text-gray-500 mt-0.5">Remove wallet connection from this app</p>
+              <h3 className="font-medium text-gray-900 dark:text-white">{t('profile.settings.disconnect')}</h3>
+              <p className="text-sm text-gray-500 mt-0.5">{t('profile.settings.disconnectDesc')}</p>
             </div>
             <Button variant="danger" size="sm" onClick={onDisconnect}>
               Disconnect

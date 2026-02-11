@@ -50,9 +50,13 @@ public class SwapService {
     }
 
     @Transactional
-    public SwapHistoryResponse updateSwapStatus(UUID swapId, SwapStatus status, String txHash, boolean isSourceTx) {
+    public SwapHistoryResponse updateSwapStatus(UUID userId, UUID swapId, SwapStatus status, String txHash, boolean isSourceTx) {
         SwapHistory swap = swapHistoryRepository.findById(swapId)
                 .orElseThrow(() -> new IllegalArgumentException("Swap not found"));
+
+        if (!swap.getUser().getId().equals(userId)) {
+            throw new IllegalArgumentException("Swap does not belong to user");
+        }
 
         swap.setStatus(status);
 
@@ -73,9 +77,13 @@ public class SwapService {
     }
 
     @Transactional
-    public SwapHistoryResponse updateHtlcSwapId(UUID swapId, String htlcSwapId) {
+    public SwapHistoryResponse updateHtlcSwapId(UUID userId, UUID swapId, String htlcSwapId) {
         SwapHistory swap = swapHistoryRepository.findById(swapId)
                 .orElseThrow(() -> new IllegalArgumentException("Swap not found"));
+
+        if (!swap.getUser().getId().equals(userId)) {
+            throw new IllegalArgumentException("Swap does not belong to user");
+        }
 
         swap.setHtlcSwapId(htlcSwapId);
         swap.setStatus(SwapStatus.HTLC_CREATED);
@@ -91,9 +99,12 @@ public class SwapService {
     }
 
     @Transactional(readOnly = true)
-    public SwapHistoryResponse getSwapById(UUID swapId) {
+    public SwapHistoryResponse getSwapById(UUID userId, UUID swapId) {
         SwapHistory swap = swapHistoryRepository.findById(swapId)
                 .orElseThrow(() -> new IllegalArgumentException("Swap not found"));
+        if (!swap.getUser().getId().equals(userId)) {
+            throw new IllegalArgumentException("Swap does not belong to user");
+        }
         return toResponse(swap);
     }
 
@@ -111,7 +122,7 @@ public class SwapService {
                 SwapStatus.HTLC_CREATED,
                 SwapStatus.HTLC_MATCHED);
 
-        return swapHistoryRepository.findByUserIdAndStatus(userId, SwapStatus.HTLC_CREATED).stream()
+        return swapHistoryRepository.findByUserIdAndStatusIn(userId, activeStatuses).stream()
                 .map(this::toResponse)
                 .toList();
     }

@@ -1,33 +1,21 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { parseAbiItem, createPublicClient, http } from 'viem';
+import { parseAbiItem } from 'viem';
 import { HTLC_ABI } from '@/lib/contracts/abis/HTLC';
 import { getContractAddress } from '@/lib/contracts/addresses';
-import { sepolia, polygonAmoy } from 'wagmi/chains';
+import { getPublicClient } from '@/lib/utils/rpcClient';
+import {
+  HTLC_STATUS,
+  EVENT_LOG_CHUNK_SIZE,
+  EVENT_LOG_MAX_BLOCKS,
+  EVENT_LOG_CONCURRENCY,
+  SECRET_POLL_INTERVAL_MS,
+} from '@/lib/constants/swap';
 
 const SWAP_WITHDRAWN_EVENT = parseAbiItem(
   'event SwapWithdrawn(bytes32 indexed swapId, bytes32 secret, address indexed participant)'
 );
-
-const chains: Record<number, (typeof sepolia) | (typeof polygonAmoy)> = {
-  [sepolia.id]: sepolia,
-  [polygonAmoy.id]: polygonAmoy,
-};
-
-function getClient(chainId: number) {
-  const chain = chains[chainId];
-  if (!chain) throw new Error(`Unsupported chain: ${chainId}`);
-
-  const rpcUrl = chainId === sepolia.id
-    ? (process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL || 'https://eth-sepolia.g.alchemy.com/v2/demo')
-    : (process.env.NEXT_PUBLIC_POLYGON_AMOY_RPC_URL || 'https://rpc-amoy.polygon.technology');
-
-  return createPublicClient({
-    chain,
-    transport: http(rpcUrl),
-  });
-}
 
 /**
  * Search for SwapWithdrawn event by paginating getLogs in small chunks.
@@ -35,14 +23,14 @@ function getClient(chainId: number) {
  * so we search backwards from the current block in 10-block chunks.
  */
 async function findSecretInLogs(
-  client: ReturnType<typeof getClient>,
+  client: ReturnType<typeof getPublicClient>,
   htlcAddress: `0x${string}`,
   swapId: `0x${string}`,
 ): Promise<`0x${string}` | null> {
   const currentBlock = await client.getBlockNumber();
-  const CHUNK_SIZE = 10n;
-  const MAX_BLOCKS = 5000n; // ~16h on Sepolia, ~2.7h on Amoy
-  const CONCURRENCY = 10;
+  const CHUNK_SIZE = EVENT_LOG_CHUNK_SIZE;
+  const MAX_BLOCKS = EVENT_LOG_MAX_BLOCKS;
+  const CONCURRENCY = EVENT_LOG_CONCURRENCY;
 
   const startBlock = currentBlock > MAX_BLOCKS ? currentBlock - MAX_BLOCKS : 0n;
 
@@ -108,7 +96,7 @@ export function useSwapSecretFromEvent(
 
     try {
       const htlcAddress = getContractAddress(chainId, 'htlc');
-      const client = getClient(chainId);
+      const client = getPublicClient(chainId);
 
       // First: verify the HTLC is actually withdrawn (quick contract read)
       try {
@@ -119,8 +107,7 @@ export function useSwapSecretFromEvent(
           args: [swapId],
         }) as any;
 
-        // Status 2 = Withdrawn
-        if (swapData.status !== 2) {
+        if (swapData.status !== HTLC_STATUS.WITHDRAWN) {
           // Not withdrawn yet, no secret to find
           return;
         }
@@ -148,7 +135,7 @@ export function useSwapSecretFromEvent(
 
     fetchSecret();
 
-    const interval = setInterval(fetchSecret, 15000);
+    const interval = setInterval(fetchSecret, SECRET_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [fetchSecret, enabled, swapId, secret]);
 

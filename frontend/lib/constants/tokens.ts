@@ -149,6 +149,16 @@ export const tokensByChain: Record<number, Token[]> = {
   ],
 };
 
+// O(1) lookup index: chainId -> lowercase address -> Token
+const tokenIndex: Record<number, Record<string, Token>> = {};
+for (const [chainId, tokens] of Object.entries(tokensByChain)) {
+  const map: Record<string, Token> = {};
+  for (const token of tokens) {
+    map[token.address.toLowerCase()] = token;
+  }
+  tokenIndex[Number(chainId)] = map;
+}
+
 export function getTokensByChainId(chainId: number): Token[] {
   return tokensByChain[chainId] || [];
 }
@@ -157,10 +167,7 @@ export function getTokenByAddress(
   chainId: number,
   address: `0x${string}`
 ): Token | undefined {
-  const tokens = getTokensByChainId(chainId);
-  return tokens.find(
-    (token) => token.address.toLowerCase() === address.toLowerCase()
-  );
+  return tokenIndex[chainId]?.[address.toLowerCase()];
 }
 
 export function getTokenBySymbol(

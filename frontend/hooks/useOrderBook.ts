@@ -9,6 +9,7 @@ import {
 import { orderBookABI } from '@/lib/contracts/abis/OrderBook';
 import { getContractAddress } from '@/lib/contracts/addresses';
 import { getTokenByAddress } from '@/lib/constants/tokens';
+import { ORDER_STATUS, ORDER_BOOK_REFETCH_MS, ORDER_BOOK_STALE_MS, ORDER_BOOK_BATCH_SIZE } from '@/lib/constants/swap';
 import type { Order, OrderDisplay, OrderStatus } from '@/types/order';
 import { formatUnits } from 'viem';
 
@@ -35,7 +36,7 @@ export function useOrderBook() {
       const orders: OrderDisplay[] = [];
 
       // Fetch orders in batches for better performance
-      const batchSize = 10;
+      const batchSize = ORDER_BOOK_BATCH_SIZE;
       for (let i = 1n; i <= orderCounter; i += BigInt(batchSize)) {
         const batch = [];
         for (let j = i; j < i + BigInt(batchSize) && j <= orderCounter; j++) {
@@ -53,7 +54,7 @@ export function useOrderBook() {
 
         for (const order of results) {
           // Only include active orders
-          if (order.status === 0) {
+          if (order.status === ORDER_STATUS.ACTIVE) {
             const sellToken = getTokenByAddress(chainId, order.tokenToSell);
             const buyToken = getTokenByAddress(chainId, order.tokenToBuy);
 
@@ -80,8 +81,8 @@ export function useOrderBook() {
       // Sort by newest first (highest ID)
       return orders.sort((a, b) => Number(b.id - a.id));
     },
-    refetchInterval: 30000, // Refetch every 30s
-    staleTime: 10000,
+    refetchInterval: ORDER_BOOK_REFETCH_MS,
+    staleTime: ORDER_BOOK_STALE_MS,
   });
 
   // Watch for new orders

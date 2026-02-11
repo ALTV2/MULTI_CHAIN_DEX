@@ -1,6 +1,9 @@
 package com.multichain.dex.controller;
 
 import com.multichain.dex.domain.enums.SwapStatus;
+import com.multichain.dex.dto.StoreSecretRequest;
+import com.multichain.dex.dto.UpdateHtlcIdRequest;
+import com.multichain.dex.dto.UpdateSwapStatusRequest;
 import com.multichain.dex.dto.request.CreateSwapRequest;
 import com.multichain.dex.dto.response.SwapHistoryResponse;
 import com.multichain.dex.security.UserPrincipal;
@@ -58,8 +61,10 @@ public class SwapController {
 
     @GetMapping("/{swapId}")
     @Operation(summary = "Get swap by ID", description = "Get swap details by ID")
-    public ResponseEntity<SwapHistoryResponse> getSwapById(@PathVariable UUID swapId) {
-        SwapHistoryResponse response = swapService.getSwapById(swapId);
+    public ResponseEntity<SwapHistoryResponse> getSwapById(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable UUID swapId) {
+        SwapHistoryResponse response = swapService.getSwapById(principal.getUserId(), swapId);
         return ResponseEntity.ok(response);
     }
 
@@ -73,23 +78,24 @@ public class SwapController {
     @PatchMapping("/{swapId}/status")
     @Operation(summary = "Update swap status", description = "Update the status of a swap")
     public ResponseEntity<SwapHistoryResponse> updateStatus(
+            @AuthenticationPrincipal UserPrincipal principal,
             @PathVariable UUID swapId,
-            @RequestBody Map<String, Object> body) {
-        SwapStatus status = SwapStatus.valueOf((String) body.get("status"));
-        String txHash = (String) body.get("txHash");
-        Boolean isSourceTx = (Boolean) body.getOrDefault("isSourceTx", true);
+            @Valid @RequestBody UpdateSwapStatusRequest request) {
+        SwapStatus status = SwapStatus.valueOf(request.getStatus());
+        String txHash = request.getTxHash();
+        Boolean isSourceTx = request.getIsSourceTx() != null ? request.getIsSourceTx() : true;
 
-        SwapHistoryResponse response = swapService.updateSwapStatus(swapId, status, txHash, isSourceTx);
+        SwapHistoryResponse response = swapService.updateSwapStatus(principal.getUserId(), swapId, status, txHash, isSourceTx);
         return ResponseEntity.ok(response);
     }
 
     @PatchMapping("/{swapId}/htlc")
     @Operation(summary = "Update HTLC swap ID", description = "Set the on-chain HTLC swap ID")
     public ResponseEntity<SwapHistoryResponse> updateHtlcId(
+            @AuthenticationPrincipal UserPrincipal principal,
             @PathVariable UUID swapId,
-            @RequestBody Map<String, String> body) {
-        String htlcSwapId = body.get("htlcSwapId");
-        SwapHistoryResponse response = swapService.updateHtlcSwapId(swapId, htlcSwapId);
+            @Valid @RequestBody UpdateHtlcIdRequest request) {
+        SwapHistoryResponse response = swapService.updateHtlcSwapId(principal.getUserId(), swapId, request.getHtlcSwapId());
         return ResponseEntity.ok(response);
     }
 
@@ -98,9 +104,8 @@ public class SwapController {
     public ResponseEntity<Void> storeSecret(
             @AuthenticationPrincipal UserPrincipal principal,
             @PathVariable UUID swapId,
-            @RequestBody Map<String, String> body) {
-        String encryptedSecret = body.get("encryptedSecret");
-        swapService.storeEncryptedSecret(principal.getUserId(), swapId, encryptedSecret);
+            @Valid @RequestBody StoreSecretRequest request) {
+        swapService.storeEncryptedSecret(principal.getUserId(), swapId, request.getEncryptedSecret());
         return ResponseEntity.ok().build();
     }
 

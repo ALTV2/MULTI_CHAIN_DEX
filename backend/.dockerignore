@@ -1,0 +1,5 @@
+target
+.mvn/repository
+*.log
+.env
+.git

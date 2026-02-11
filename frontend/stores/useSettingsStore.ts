@@ -18,7 +18,7 @@ interface SettingsActions {
 export const useSettingsStore = create<SettingsState & SettingsActions>()(
   persist(
     (set, get) => ({
-      secretStorage: 'local',
+      secretStorage: 'show_once',
       defaultTargetWallets: {},
 
       setSecretStorage: (mode) => set({ secretStorage: mode }),

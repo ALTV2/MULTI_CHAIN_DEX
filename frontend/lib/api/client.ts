@@ -2,6 +2,8 @@ import { useAuthStore } from '@/stores/useAuthStore';
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api';
 
+let isLoggingOut = false;
+
 class ApiError extends Error {
   constructor(
     public status: number,
@@ -32,8 +34,13 @@ async function request<T>(
     headers,
   });
 
-  if (response.status === 401) {
-    useAuthStore.getState().logout();
+  if (response.status === 401 && !isLoggingOut) {
+    isLoggingOut = true;
+    try {
+      useAuthStore.getState().logout();
+    } finally {
+      isLoggingOut = false;
+    }
     throw new ApiError(401, 'Unauthorized');
   }
 

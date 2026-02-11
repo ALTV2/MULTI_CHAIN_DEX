@@ -20,6 +20,27 @@ export const CONTRACT_ERRORS: Record<string, string> = {
   TokenBuyTransferFailed: 'Failed to transfer tokens to order creator',
   TokenSellTransferFailed: 'Failed to transfer tokens to you',
 
+  // HTLC errors
+  SwapAlreadyExists: 'A swap with this ID already exists',
+  InvalidHashlock: 'Invalid hashlock provided',
+  InvalidTimelock: 'Timelock must be in the future',
+  TimelockNotExpired: 'Cannot refund: timelock has not expired yet',
+  TimelockExpired: 'Cannot withdraw: timelock has expired',
+  HashlockMismatch: 'Secret does not match the hashlock',
+  SwapNotActive: 'This swap is no longer active',
+  NotParticipant: 'Only the swap participant can withdraw',
+  NotInitiator: 'Only the swap initiator can refund',
+  ZeroAmount: 'Amount must be greater than zero',
+
+  // CrossChainOrderBook errors
+  InvalidExpiry: 'Order expiry must be in the future',
+  SameChainNotAllowed: 'Source and target chain must be different',
+  OrderNotFound: 'Order does not exist',
+  OrderAlreadyMatched: 'Order has already been matched',
+  OrderExpired: 'This order has expired',
+  NotOrderOwner: 'Only the order owner can perform this action',
+  CannotMatchOwnOrder: 'You cannot match your own order',
+
   // General errors
   ReentrancyGuardReentrantCall: 'Transaction failed, please try again',
   OwnableUnauthorizedAccount: 'You are not authorized to perform this action',

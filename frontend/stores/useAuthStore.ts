@@ -1,6 +1,15 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+function isTokenExpired(token: string): boolean {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return typeof payload.exp === 'number' && payload.exp < Date.now() / 1000;
+  } catch {
+    return true;
+  }
+}
+
 interface AuthState {
   token: string | null;
   userId: string | null;
@@ -52,6 +61,11 @@ export const useAuthStore = create<AuthState & AuthActions>()(
         walletAddress: state.walletAddress,
         isAuthenticated: state.isAuthenticated,
       }),
+      onRehydrateStorage: () => (state) => {
+        if (state?.token && isTokenExpired(state.token)) {
+          state.logout();
+        }
+      },
     }
   )
 );

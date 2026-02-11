@@ -13,12 +13,20 @@ function matchSwap(s: StoredSwapMeta, orderId: string, sourceChainId?: number): 
   return true;
 }
 
+function isValidSwap(s: unknown): s is StoredSwapMeta {
+  if (!s || typeof s !== 'object') return false;
+  const obj = s as Record<string, unknown>;
+  return typeof obj.orderId === 'string' && typeof obj.sourceChainId === 'number';
+}
+
 export function getSwaps(walletAddress: string): StoredSwapMeta[] {
   if (typeof window === 'undefined') return [];
   try {
     const raw = localStorage.getItem(getStorageKey(walletAddress));
     if (!raw) return [];
-    return JSON.parse(raw) as StoredSwapMeta[];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isValidSwap);
   } catch {
     return [];
   }

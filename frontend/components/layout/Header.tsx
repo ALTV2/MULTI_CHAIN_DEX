@@ -112,6 +112,7 @@ export function Header() {
                 'transition-colors duration-200',
                 'text-xs font-bold text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
               )}
+              aria-label={locale === 'en' ? 'Switch to Russian' : 'Switch to English'}
               title={locale === 'en' ? 'Переключить на русский' : 'Switch to English'}
             >
               {locale === 'en' ? 'RU' : 'EN'}
@@ -132,6 +133,8 @@ export function Header() {
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               className="md:hidden p-2 rounded-lg text-gray-500 hover:bg-light-hover dark:hover:bg-dark-hover"
+              aria-label="Toggle navigation menu"
+              aria-expanded={mobileMenuOpen}
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 {mobileMenuOpen ? (

@@ -8,6 +8,8 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
  * @title CrossChainOrderBook (Polygon)
  * @notice On-chain order book for cross-chain swap intentions
  * @dev Stores swap intentions that can be discovered by counterparties on other chains
+ * @notice Warning: the orderIds array grows indefinitely and is never pruned; this is a testnet-only design not suitable for production
+ * @dev No on-chain verification of cross-chain state; order completion relies on off-chain coordination and trust in the HTLC flow
  */
 contract CrossChainOrderBook is Ownable, ReentrancyGuard {
 

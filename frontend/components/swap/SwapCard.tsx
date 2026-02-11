@@ -7,20 +7,9 @@ import { Badge } from '@/components/ui/Badge';
 import { SwapStepper } from './SwapStepper';
 import { SwapActionPanel } from './SwapActionPanel';
 import { getPhaseDescription } from '@/lib/utils/swapPhase';
-import { chainConfig, SupportedChainId, contractAddresses } from '@/lib/contracts/addresses';
+import { chainConfig, SupportedChainId } from '@/lib/contracts/addresses';
+import { getTokenByAddress } from '@/lib/constants/tokens';
 import type { ActiveSwap } from '@/types/swap';
-
-function getTokenSymbol(tokenAddress: string, chainId: number): string {
-  if (tokenAddress === '0x0000000000000000000000000000000000000000') {
-    return chainConfig[chainId as SupportedChainId]?.nativeCurrency.symbol || 'ETH';
-  }
-  const addresses = contractAddresses[chainId as SupportedChainId];
-  if (!addresses) return 'Token';
-  const isAmoy = chainId === 80002;
-  if (tokenAddress.toLowerCase() === addresses.testTokenA.toLowerCase()) return isAmoy ? 'pTka' : 'TKA';
-  if (tokenAddress.toLowerCase() === addresses.testTokenB.toLowerCase()) return isAmoy ? 'pTkb' : 'TKB';
-  return 'Token';
-}
 
 function getTimelockCountdown(timelock: bigint | undefined): string {
   if (!timelock) return '--';
@@ -66,8 +55,8 @@ export function SwapCard({ swap, onUpdate }: SwapCardProps) {
 
   const sourceConfig = chainConfig[meta.sourceChainId as SupportedChainId];
   const targetConfig = chainConfig[meta.targetChainId as SupportedChainId];
-  const sellSymbol = getTokenSymbol(meta.sellToken, meta.sourceChainId);
-  const buySymbol = getTokenSymbol(meta.buyToken, meta.targetChainId);
+  const sellSymbol = getTokenByAddress(meta.sourceChainId, meta.sellToken as `0x${string}`)?.symbol || 'Token';
+  const buySymbol = getTokenByAddress(meta.targetChainId, meta.buyToken as `0x${string}`)?.symbol || 'Token';
   const description = getPhaseDescription(phase, meta.role);
 
   return (

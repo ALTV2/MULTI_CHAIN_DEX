@@ -21,6 +21,8 @@ public interface SwapHistoryRepository extends JpaRepository<SwapHistory, UUID> 
 
     List<SwapHistory> findByUserIdAndStatus(UUID userId, SwapStatus status);
 
+    List<SwapHistory> findByUserIdAndStatusIn(UUID userId, List<SwapStatus> statuses);
+
     Optional<SwapHistory> findByHtlcSwapId(String htlcSwapId);
 
     @Query("SELECT s FROM SwapHistory s WHERE s.status IN :statuses AND s.timelockExpiry < :now")

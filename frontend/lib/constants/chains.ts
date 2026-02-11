@@ -1,6 +1,6 @@
-import { sepolia } from 'wagmi/chains';
+import { sepolia, polygonAmoy } from 'wagmi/chains';
 
-export const supportedChains = [sepolia] as const;
+export const supportedChains = [sepolia, polygonAmoy] as const;
 
 export const defaultChain = sepolia;
 

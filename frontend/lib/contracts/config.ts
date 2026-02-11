@@ -8,7 +8,7 @@ const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || '';
 // RPC URLs
 const sepoliaRpcUrl =
   process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL ||
-  'https://eth-sepolia.g.alchemy.com/v2/demo';
+  'https://rpc.sepolia.org';
 
 const polygonAmoyRpcUrl =
   process.env.NEXT_PUBLIC_POLYGON_AMOY_RPC_URL ||

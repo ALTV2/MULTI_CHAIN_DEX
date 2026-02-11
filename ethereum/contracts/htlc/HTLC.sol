@@ -9,6 +9,8 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
  * @title HTLC - Hash Time-Locked Contract
  * @notice Enables trustless cross-chain atomic swaps using hashlock and timelock
  * @dev Supports both native tokens (ETH/MATIC) and ERC20 tokens
+ * @notice Security: the secret is revealed on-chain during withdraw, so miners can front-run the transaction by observing the mempool
+ * @dev Swap ID uniqueness is derived from (initiator, participant, hashlock, timelock, chainId); callers must ensure unique parameters per initiator+participant pair
  */
 contract HTLC is ReentrancyGuard {
     using SafeERC20 for IERC20;

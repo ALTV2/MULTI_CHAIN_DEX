@@ -3,6 +3,7 @@
 import { useState, useCallback } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
+import { toast } from 'sonner';
 
 interface SecretRevealModalProps {
   open: boolean;
@@ -21,15 +22,7 @@ export function SecretRevealModal({ open, onClose, secret, onConfirm }: SecretRe
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback for older browsers
-      const textarea = document.createElement('textarea');
-      textarea.value = secret;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      toast.error('Failed to copy — please select and copy manually');
     }
   }, [secret]);
 

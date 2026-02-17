@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   useWriteContract,
@@ -36,6 +36,17 @@ export function useCreateOrder() {
     hash: txHash,
   });
 
+  // Invalidate caches after transaction is confirmed
+  useEffect(() => {
+    if (isSuccess && txHash) {
+      console.log('✅ Same-chain order created, invalidating all order caches');
+      queryClient.invalidateQueries({ queryKey: ['orderBook'] });
+      queryClient.invalidateQueries({ queryKey: ['userOrders'] });
+      queryClient.invalidateQueries({ queryKey: ['tokenBalance'] });
+      queryClient.invalidateQueries({ queryKey: ['crossChainOrders'] });
+    }
+  }, [isSuccess, txHash, queryClient]);
+
   const mutation = useMutation({
     mutationFn: async ({
       tokenToSell,
@@ -48,22 +59,26 @@ export function useCreateOrder() {
       const parsedSellAmount = parseUnits(sellAmount, sellDecimals);
       const parsedBuyAmount = parseUnits(buyAmount, buyDecimals);
 
+      // Polygon requires higher gas fees (min 25 gwei tip)
+      const isPolygon = chainId === 137 || chainId === 80002; // Polygon Mainnet or Amoy testnet
+      const gasParams = isPolygon
+        ? {
+            maxPriorityFeePerGas: 30000000000n, // 30 gwei
+            maxFeePerGas: 50000000000n, // 50 gwei
+          }
+        : {};
+
       const hash = await writeContractAsync({
         address: orderBookAddress,
         abi: orderBookABI,
         functionName: 'createOrder',
         args: [tokenToSell, tokenToBuy, parsedSellAmount, parsedBuyAmount],
         value: isNativeToken(tokenToSell) ? parsedSellAmount : 0n,
+        ...gasParams,
       });
 
       setTxHash(hash);
       return hash;
-    },
-    onSuccess: () => {
-      // Invalidate order book queries
-      queryClient.invalidateQueries({ queryKey: ['orderBook'] });
-      queryClient.invalidateQueries({ queryKey: ['userOrders'] });
-      queryClient.invalidateQueries({ queryKey: ['tokenBalance'] });
     },
   });
 

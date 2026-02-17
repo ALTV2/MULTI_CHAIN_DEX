@@ -1,9 +1,11 @@
 'use client';
 
-import { useWriteContract, useReadContract, useWaitForTransactionReceipt, useAccount } from 'wagmi';
-import { useCallback, useMemo } from 'react';
+import { useWriteContract, useWaitForTransactionReceipt, useAccount } from 'wagmi';
+import { useCallback, useMemo, useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CROSS_CHAIN_ORDER_BOOK_ABI } from '@/lib/contracts/abis/CrossChainOrderBook';
 import { getContractAddress, chainConfig, SupportedChainId } from '@/lib/contracts/addresses';
+import { getPublicClient } from '@/lib/utils/rpcClient';
 
 export type CrossChainOrderStatus = 'Active' | 'Matched' | 'Completed' | 'Cancelled' | 'Expired';
 
@@ -54,27 +56,44 @@ function mapOrder(data: any): CrossChainOrder {
 export function useCrossChainOrdersForTarget(sourceChainId: number, targetChainId: number) {
   const ccobAddress = getContractAddress(sourceChainId, 'crossChainOrderBook');
 
-  const { data, isLoading, error, refetch } = useReadContract({
-    address: ccobAddress,
-    abi: CROSS_CHAIN_ORDER_BOOK_ABI,
-    functionName: 'getActiveOrdersForTargetChain',
-    args: [BigInt(targetChainId)],
-    chainId: sourceChainId,
-    query: {
-      enabled: !!ccobAddress,
+  const query = useQuery({
+    queryKey: ['crossChainOrders', sourceChainId, targetChainId],
+    networkMode: 'offlineFirst', // Don't cancel based on network status
+    queryFn: async (): Promise<any[]> => {
+      const client = getPublicClient(sourceChainId);
+
+      console.log(`🔍 Fetching cross-chain orders: ${sourceChainId} → ${targetChainId}`);
+      const data = await client.readContract({
+        address: ccobAddress,
+        abi: CROSS_CHAIN_ORDER_BOOK_ABI,
+        functionName: 'getActiveOrdersForTargetChain',
+        args: [BigInt(targetChainId)],
+      }) as any[];
+
+      console.log(`📦 Raw orders fetched (${sourceChainId} → ${targetChainId}):`, data?.length || 0, data);
+      return data || [];
     },
+    enabled: !!ccobAddress,
+    refetchOnMount: true, // Refetch on mount to get latest orders
+    refetchOnWindowFocus: true, // Refetch when user returns to tab
+    refetchOnReconnect: false, // Don't refetch on network reconnect
+    refetchInterval: 15000, // Auto-refresh every 15 seconds
+    gcTime: 5 * 60 * 1000, // Keep cache for 5 minutes even when unmounted
+    staleTime: 10000, // Consider data stale after 10s
   });
 
   const orders = useMemo<CrossChainOrder[]>(() => {
-    if (!data) return [];
-    return (data as any[]).map(mapOrder);
-  }, [data]);
+    if (!query.data) return [];
+    const mapped = query.data.map(mapOrder);
+    console.log(`✅ Mapped cross-chain orders:`, mapped.length, mapped);
+    return mapped;
+  }, [query.data]);
 
   return {
     orders,
-    isLoading,
-    error,
-    refetch,
+    isLoading: query.isLoading,
+    error: query.error,
+    refetch: query.refetch,
   };
 }
 
@@ -82,37 +101,67 @@ export function useMyeCrossChainOrders(chainId: number) {
   const { address } = useAccount();
   const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook');
 
-  const { data, isLoading, error, refetch } = useReadContract({
-    address: ccobAddress,
-    abi: CROSS_CHAIN_ORDER_BOOK_ABI,
-    functionName: 'getOrdersByCreator',
-    args: address ? [address] : undefined,
-    query: {
-      enabled: !!address && !!ccobAddress,
+  const query = useQuery({
+    queryKey: ['myeCrossChainOrders', chainId, address],
+    networkMode: 'offlineFirst', // Don't cancel based on network status
+    queryFn: async (): Promise<any[]> => {
+      if (!address) return [];
+
+      const client = getPublicClient(chainId);
+
+      const data = await client.readContract({
+        address: ccobAddress,
+        abi: CROSS_CHAIN_ORDER_BOOK_ABI,
+        functionName: 'getOrdersByCreator',
+        args: [address],
+      }) as any[];
+
+      return data || [];
     },
+    enabled: !!address && !!ccobAddress,
+    refetchOnMount: false, // Don't refetch on mount if data exists
+    refetchOnWindowFocus: false, // Don't refetch on window focus
+    refetchOnReconnect: false, // Don't refetch on network reconnect
+    gcTime: 5 * 60 * 1000, // Keep cache for 5 minutes even when unmounted
+    staleTime: 10000, // Consider data stale after 10s
   });
 
   const orders = useMemo<CrossChainOrder[]>(() => {
-    if (!data) return [];
-    return (data as any[]).map(mapOrder);
-  }, [data]);
+    if (!query.data) return [];
+    const mapped = query.data.map(mapOrder);
+    console.log(`✅ Mapped cross-chain orders:`, mapped.length, mapped);
+    return mapped;
+  }, [query.data]);
 
   return {
     orders,
-    isLoading,
-    error,
-    refetch,
+    isLoading: query.isLoading,
+    error: query.error,
+    refetch: query.refetch,
   };
 }
 
 export function useCreateCrossChainOrder(chainId: number) {
   const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook');
+  const queryClient = useQueryClient();
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();
 
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
     hash,
   });
+
+  // Invalidate order caches when transaction is confirmed
+  useEffect(() => {
+    if (isSuccess && hash) {
+      console.log('✅ Cross-chain order created, invalidating all order caches');
+      // Invalidate all cross-chain order queries
+      queryClient.invalidateQueries({ queryKey: ['crossChainOrders'] });
+      queryClient.invalidateQueries({ queryKey: ['myeCrossChainOrders'] });
+      queryClient.invalidateQueries({ queryKey: ['orderBook'] });
+      queryClient.invalidateQueries({ queryKey: ['userOrders'] });
+    }
+  }, [isSuccess, hash, queryClient]);
 
   const createOrder = useCallback(
     async (params: {
@@ -125,6 +174,18 @@ export function useCreateCrossChainOrder(chainId: number) {
       minTimelock: bigint;
       expiresAt: bigint;
     }) => {
+      // Polygon requires higher gas prices
+      const isPolygon = chainId === 137 || chainId === 80002;
+      const gasConfig = isPolygon
+        ? {
+            gas: 500000n,
+            maxFeePerGas: 50000000000n, // 50 Gwei
+            maxPriorityFeePerGas: 30000000000n, // 30 Gwei
+          }
+        : {
+            gas: 500000n,
+          };
+
       return writeContract({
         address: ccobAddress,
         abi: CROSS_CHAIN_ORDER_BOOK_ABI,
@@ -139,9 +200,10 @@ export function useCreateCrossChainOrder(chainId: number) {
           params.minTimelock,
           params.expiresAt,
         ],
+        ...gasConfig,
       });
     },
-    [writeContract, ccobAddress]
+    [writeContract, ccobAddress, chainId]
   );
 
   return {
@@ -156,6 +218,7 @@ export function useCreateCrossChainOrder(chainId: number) {
 
 export function useMatchCrossChainOrder(chainId: number) {
   const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook');
+  const queryClient = useQueryClient();
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();
 
@@ -163,16 +226,40 @@ export function useMatchCrossChainOrder(chainId: number) {
     hash,
   });
 
+  // Invalidate order caches when transaction is confirmed
+  useEffect(() => {
+    if (isSuccess && hash) {
+      console.log('✅ Cross-chain order matched, invalidating all order caches');
+      queryClient.invalidateQueries({ queryKey: ['crossChainOrders'] });
+      queryClient.invalidateQueries({ queryKey: ['myeCrossChainOrders'] });
+      queryClient.invalidateQueries({ queryKey: ['orderBook'] });
+      queryClient.invalidateQueries({ queryKey: ['userOrders'] });
+    }
+  }, [isSuccess, hash, queryClient]);
+
   const matchOrder = useCallback(
     async (orderId: bigint, htlcSwapId: `0x${string}`) => {
+      // Polygon requires higher gas prices
+      const isPolygon = chainId === 137 || chainId === 80002;
+      const gasConfig = isPolygon
+        ? {
+            gas: 500000n,
+            maxFeePerGas: 50000000000n, // 50 Gwei
+            maxPriorityFeePerGas: 30000000000n, // 30 Gwei
+          }
+        : {
+            gas: 500000n,
+          };
+
       return writeContract({
         address: ccobAddress,
         abi: CROSS_CHAIN_ORDER_BOOK_ABI,
         functionName: 'matchOrder',
         args: [orderId, htlcSwapId],
+        ...gasConfig,
       });
     },
-    [writeContract, ccobAddress]
+    [writeContract, ccobAddress, chainId]
   );
 
   return {
@@ -187,6 +274,7 @@ export function useMatchCrossChainOrder(chainId: number) {
 
 export function useCancelCrossChainOrder(chainId: number) {
   const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook');
+  const queryClient = useQueryClient();
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();
 
@@ -194,20 +282,112 @@ export function useCancelCrossChainOrder(chainId: number) {
     hash,
   });
 
+  // Invalidate order caches when transaction is confirmed
+  useEffect(() => {
+    if (isSuccess && hash) {
+      console.log('✅ Cross-chain order cancelled, invalidating all order caches');
+      queryClient.invalidateQueries({ queryKey: ['crossChainOrders'] });
+      queryClient.invalidateQueries({ queryKey: ['myeCrossChainOrders'] });
+      queryClient.invalidateQueries({ queryKey: ['orderBook'] });
+      queryClient.invalidateQueries({ queryKey: ['userOrders'] });
+    }
+  }, [isSuccess, hash, queryClient]);
+
   const cancelOrder = useCallback(
     async (orderId: bigint) => {
+      console.log('🗑️ useCancelCrossChainOrder: Cancelling order', {
+        orderId: orderId.toString(),
+        chainId,
+        ccobAddress,
+      });
+
+      // Polygon requires higher gas prices
+      const isPolygon = chainId === 137 || chainId === 80002;
+      const gasConfig = isPolygon
+        ? {
+            gas: 300000n,
+            maxFeePerGas: 50000000000n, // 50 Gwei
+            maxPriorityFeePerGas: 30000000000n, // 30 Gwei
+          }
+        : {
+            gas: 300000n,
+          };
+
       return writeContract({
         address: ccobAddress,
         abi: CROSS_CHAIN_ORDER_BOOK_ABI,
         functionName: 'cancelOrder',
         args: [orderId],
+        ...gasConfig,
       });
     },
-    [writeContract, ccobAddress]
+    [writeContract, ccobAddress, chainId]
   );
 
   return {
     cancelOrder,
+    hash,
+    isPending,
+    isConfirming,
+    isSuccess,
+    error,
+  };
+}
+
+export function useReactivateCrossChainOrder(chainId: number) {
+  const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook');
+  const queryClient = useQueryClient();
+
+  const { writeContract, data: hash, isPending, error } = useWriteContract();
+
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+    hash,
+  });
+
+  // Invalidate order caches when transaction is confirmed
+  useEffect(() => {
+    if (isSuccess && hash) {
+      console.log('✅ Cross-chain order reactivated, invalidating all order caches');
+      queryClient.invalidateQueries({ queryKey: ['crossChainOrders'] });
+      queryClient.invalidateQueries({ queryKey: ['myeCrossChainOrders'] });
+      queryClient.invalidateQueries({ queryKey: ['orderBook'] });
+      queryClient.invalidateQueries({ queryKey: ['userOrders'] });
+    }
+  }, [isSuccess, hash, queryClient]);
+
+  const reactivateOrder = useCallback(
+    async (orderId: bigint) => {
+      console.log('🔄 useReactivateCrossChainOrder: Reactivating matched order', {
+        orderId: orderId.toString(),
+        chainId,
+        ccobAddress,
+      });
+
+      // Polygon requires higher gas prices
+      const isPolygon = chainId === 137 || chainId === 80002;
+      const gasConfig = isPolygon
+        ? {
+            gas: 300000n,
+            maxFeePerGas: 50000000000n, // 50 Gwei
+            maxPriorityFeePerGas: 30000000000n, // 30 Gwei
+          }
+        : {
+            gas: 300000n,
+          };
+
+      return writeContract({
+        address: ccobAddress,
+        abi: CROSS_CHAIN_ORDER_BOOK_ABI,
+        functionName: 'reactivateOrder',
+        args: [orderId],
+        ...gasConfig,
+      });
+    },
+    [writeContract, ccobAddress, chainId]
+  );
+
+  return {
+    reactivateOrder,
     hash,
     isPending,
     isConfirming,

@@ -5,7 +5,7 @@ import { useAccount } from 'wagmi';
 import { HTLC_ABI } from '@/lib/contracts/abis/HTLC';
 import { CROSS_CHAIN_ORDER_BOOK_ABI } from '@/lib/contracts/abis/CrossChainOrderBook';
 import { getContractAddress, getSupportedChainIds } from '@/lib/contracts/addresses';
-import { getSwaps, getSwap, saveSwap, updateSwap } from '@/lib/utils/swapStorage';
+import { getSwaps, getSwap, saveSwap, updateSwap, cleanupAllFakeOrders } from '@/lib/utils/swapStorage';
 import { determineSwapPhase } from '@/lib/utils/swapPhase';
 import { getPublicClient } from '@/lib/utils/rpcClient';
 import type { StoredSwapMeta, ActiveSwap } from '@/types/swap';
@@ -46,6 +46,14 @@ async function scanBlockchainForSwaps(walletAddress: string): Promise<number> {
 
         for (const order of creatorOrders) {
           const orderId = order.id.toString();
+
+          // ⚠️ IMPORTANT: Verify that the wallet is actually the creator
+          // This prevents saving matched orders with incorrect role
+          if (order.creator.toLowerCase() !== lowerWallet) {
+            console.warn(`[scan] Skipping order ${orderId}: creator mismatch (expected ${lowerWallet}, got ${order.creator.toLowerCase()})`);
+            continue;
+          }
+
           const existing = getSwap(walletAddress, orderId, chainId);
 
           if (existing) {
@@ -233,6 +241,7 @@ async function discoverHTLCSwap(
 }
 
 async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string): Promise<ActiveSwap> {
+  console.log(`[fetchSwapOnChainData] Processing order ${meta.orderId} on chain ${meta.sourceChainId}`);
   try {
     const sourceClient = getPublicClient(meta.sourceChainId);
     const targetClient = getPublicClient(meta.targetChainId);
@@ -241,6 +250,7 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
     // Step 1: Fetch CCOB order status from source chain, sync matcher
     const ccobAddress = getContractAddress(meta.sourceChainId, 'crossChainOrderBook');
     let orderStatus: string | undefined;
+    let expiresAt: bigint | undefined;
 
     try {
       const orderData = await sourceClient.readContract({
@@ -250,13 +260,17 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
         args: [BigInt(meta.orderId)],
       }) as any;
       orderStatus = ORDER_STATUS_MAP[orderData.status] || 'Active';
+      expiresAt = orderData.expiresAt as bigint;
+
+      console.log(`[fetchSwapOnChainData] Order ${meta.orderId} on chain ${meta.sourceChainId}: status=${orderStatus}, expiresAt=${expiresAt}`);
 
       const matchedBy = orderData.matchedBy as string;
       if (matchedBy && matchedBy !== ZERO_ADDRESS && !meta.matcher) {
         updates.matcher = matchedBy;
         meta = { ...meta, matcher: matchedBy };
       }
-    } catch {
+    } catch (err) {
+      console.error(`[fetchSwapOnChainData] Failed to fetch order ${meta.orderId} status:`, err);
       // Order might not exist or RPC error
     }
 
@@ -281,8 +295,9 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
           meta = { ...meta, creatorHtlcSwapId: found.swapId };
           creatorHtlcStatus = found.status;
           creatorHtlcTimelock = found.timelock;
-          // Sync hashlock from on-chain if missing locally
-          if (!meta.hashlock || meta.hashlock === '') {
+          // ALWAYS sync hashlock from creator's HTLC (overwrite if different)
+          if (found.hashlock && found.hashlock !== meta.hashlock) {
+            console.log(`[fetchSwapOnChainData] ⚠️ Syncing hashlock from creator HTLC for order ${meta.orderId}: ${found.hashlock} (was: ${meta.hashlock})`);
             updates.hashlock = found.hashlock;
             meta = { ...meta, hashlock: found.hashlock };
           }
@@ -302,8 +317,9 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
         }) as any;
         creatorHtlcStatus = HTLC_STATUS_MAP[swapData.status] || 'Empty';
         creatorHtlcTimelock = swapData.timelock;
-        // Sync hashlock from on-chain if missing
-        if ((!meta.hashlock || meta.hashlock === '') && swapData.hashlock) {
+        // ALWAYS sync hashlock from creator's HTLC (overwrite if different)
+        if (swapData.hashlock && swapData.hashlock !== meta.hashlock) {
+          console.log(`[fetchSwapOnChainData] ⚠️ Syncing hashlock from creator HTLC for order ${meta.orderId}: ${swapData.hashlock} (was: ${meta.hashlock})`);
           updates.hashlock = swapData.hashlock;
           meta = { ...meta, hashlock: swapData.hashlock };
         }
@@ -316,7 +332,18 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
     let matcherHtlcStatus: string | undefined;
     let matcherHtlcTimelock: bigint | undefined;
 
+    console.log(`[fetchSwapOnChainData] Step 3 - Checking matcher HTLC for order ${meta.orderId}:`, {
+      hasMatcherHtlcSwapId: !!meta.matcherHtlcSwapId,
+      hasMatcher: !!meta.matcher,
+      hasCreator: !!meta.creator,
+      hasHashlock: !!meta.hashlock,
+      hashlock: meta.hashlock,
+      matcher: meta.matcher,
+      creator: meta.creator,
+    });
+
     if (!meta.matcherHtlcSwapId && meta.matcher && meta.creator && meta.hashlock) {
+      console.log(`[fetchSwapOnChainData] Attempting to discover matcher HTLC on chain ${meta.targetChainId}`);
       // Scan on-chain: matcher created an HTLC on target chain with creator as participant, same hashlock
       const found = await discoverHTLCSwap(
         targetClient, meta.targetChainId,
@@ -324,11 +351,16 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
         meta.hashlock // MUST match hashlock
       );
       if (found) {
+        console.log(`[fetchSwapOnChainData] ✅ Found matcher HTLC:`, found);
         updates.matcherHtlcSwapId = found.swapId;
         meta = { ...meta, matcherHtlcSwapId: found.swapId };
         matcherHtlcStatus = found.status;
         matcherHtlcTimelock = found.timelock;
+      } else {
+        console.warn(`[fetchSwapOnChainData] ⚠️ Matcher HTLC not found on chain ${meta.targetChainId}`);
       }
+    } else {
+      console.log(`[fetchSwapOnChainData] Skipping matcher HTLC discovery - condition not met`);
     }
 
     // Fetch matcher HTLC status if we have the swap ID (and didn't already fetch via discovery)
@@ -362,20 +394,45 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
       matcherHtlcTimelock,
     });
 
+    console.log(`[fetchSwapOnChainData] Order ${meta.orderId} result: phase=${phase}, orderStatus=${orderStatus}, expiresAt=${expiresAt}`);
+
     return {
       meta,
       phase,
       orderStatus,
+      expiresAt,
       creatorHtlcStatus,
       matcherHtlcStatus,
       creatorHtlcTimelock,
       matcherHtlcTimelock,
     };
   } catch (err) {
-    // Fallback: return with minimal info
+    console.error(`[fetchSwapOnChainData] Critical error for order ${meta.orderId}:`, err);
+    // Fallback: Try to fetch just the order status (minimal RPC call)
+    let fallbackStatus: string | undefined;
+    let fallbackExpiresAt: bigint | undefined;
+    try {
+      const sourceClient = getPublicClient(meta.sourceChainId);
+      const ccobAddress = getContractAddress(meta.sourceChainId, 'crossChainOrderBook');
+      const orderData = await sourceClient.readContract({
+        address: ccobAddress,
+        abi: CROSS_CHAIN_ORDER_BOOK_ABI,
+        functionName: 'getOrder',
+        args: [BigInt(meta.orderId)],
+      }) as any;
+      fallbackStatus = ORDER_STATUS_MAP[orderData.status] || 'Active';
+      fallbackExpiresAt = orderData.expiresAt as bigint;
+      console.log(`[fetchSwapOnChainData] Fallback fetch successful: order ${meta.orderId} status=${fallbackStatus}, expiresAt=${fallbackExpiresAt}`);
+    } catch {
+      console.warn(`[fetchSwapOnChainData] Fallback fetch also failed for order ${meta.orderId}, marking as Active`);
+      fallbackStatus = 'Active'; // Assume active if we can't fetch
+    }
+
     return {
       meta,
       phase: determineSwapPhase({ meta }),
+      orderStatus: fallbackStatus,
+      expiresAt: fallbackExpiresAt,
     };
   }
 }
@@ -387,6 +444,7 @@ export function useActiveSwaps() {
   const [lastRefresh, setLastRefresh] = useState(0);
   const lastScanTime = useRef(0);
   const forceNextScan = useRef(true); // Always scan on first mount
+  const cleanupDone = useRef(false); // Track if we've run cleanup
 
   const fetchAll = useCallback(async () => {
     if (!address) {
@@ -397,6 +455,12 @@ export function useActiveSwaps() {
     setIsLoading(true);
 
     try {
+      // Run cleanup once on first load to remove fake orders
+      if (!cleanupDone.current) {
+        cleanupAllFakeOrders();
+        cleanupDone.current = true;
+      }
+
       // Run blockchain scan if: first load, forced, or 30+ seconds since last scan
       const now = Date.now();
       const shouldScan = forceNextScan.current || (now - lastScanTime.current > SWAP_SCAN_COOLDOWN_MS);
@@ -451,12 +515,42 @@ export function useActiveSwaps() {
   }, []);
 
   const activeSwaps = useMemo(
-    () => swaps.filter((s) => !['completed', 'refunded'].includes(s.phase)),
+    () => {
+      console.log('[useActiveSwaps] Filtering swaps, total:', swaps.length);
+      const filtered = swaps.filter((s) => {
+        // Exclude completed/refunded phases
+        if (['completed', 'refunded'].includes(s.phase)) {
+          console.log(`  → Excluding swap ${s.meta.orderId}: phase=${s.phase}`);
+          return false;
+        }
+
+        // Exclude cancelled, expired, or completed orders at the blockchain level
+        if (s.orderStatus && ['Cancelled', 'Expired', 'Completed'].includes(s.orderStatus)) {
+          console.log(`  → Excluding swap ${s.meta.orderId}: orderStatus=${s.orderStatus}`);
+          return false;
+        }
+
+        console.log(`  ✓ Including swap ${s.meta.orderId}: phase=${s.phase}, orderStatus=${s.orderStatus || 'undefined'}`);
+        return true;
+      });
+      console.log('[useActiveSwaps] Active swaps after filter:', filtered.length);
+      return filtered;
+    },
     [swaps]
   );
 
   const historySwaps = useMemo(
-    () => swaps.filter((s) => ['completed', 'refunded'].includes(s.phase)),
+    () => swaps.filter((s) => {
+      // Include completed/refunded phases
+      if (['completed', 'refunded'].includes(s.phase)) return true;
+
+      // Include cancelled, expired, or completed orders
+      if (s.orderStatus && ['Cancelled', 'Expired', 'Completed'].includes(s.orderStatus)) {
+        return true;
+      }
+
+      return false;
+    }),
     [swaps]
   );
 

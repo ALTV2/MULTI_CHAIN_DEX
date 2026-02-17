@@ -27,20 +27,40 @@ export function useCancelOrder() {
 
   const mutation = useMutation({
     mutationFn: async (orderId: bigint) => {
+      console.log('🗑️ useCancelOrder: Cancelling same-chain order', {
+        orderId: orderId.toString(),
+        chainId,
+        orderBookAddress,
+      });
+
+      // Polygon requires higher gas fees (min 25 gwei tip)
+      const isPolygon = chainId === 137 || chainId === 80002; // Polygon Mainnet or Amoy testnet
+      const gasParams = isPolygon
+        ? {
+            maxPriorityFeePerGas: 30000000000n, // 30 gwei
+            maxFeePerGas: 50000000000n, // 50 gwei
+          }
+        : {};
+
       const hash = await writeContractAsync({
         address: orderBookAddress,
         abi: orderBookABI,
         functionName: 'cancelOrder',
         args: [orderId],
+        gas: 300000n,
+        ...gasParams,
       });
 
+      console.log('✅ Cancel tx hash:', hash);
       setTxHash(hash);
       return hash;
     },
     onSuccess: () => {
+      console.log('✅ Same-chain order cancelled, invalidating caches');
       queryClient.invalidateQueries({ queryKey: ['orderBook'] });
       queryClient.invalidateQueries({ queryKey: ['userOrders'] });
       queryClient.invalidateQueries({ queryKey: ['tokenBalance'] });
+      queryClient.invalidateQueries({ queryKey: ['crossChainOrders'] });
     },
   });
 

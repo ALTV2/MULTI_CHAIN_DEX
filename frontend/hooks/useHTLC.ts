@@ -2,7 +2,7 @@
 
 import { useWriteContract, useReadContract, useWaitForTransactionReceipt } from 'wagmi';
 import { useCallback, useMemo } from 'react';
-import { keccak256, encodeAbiParameters, parseAbiParameters, parseEther } from 'viem';
+import { keccak256, encodeAbiParameters, parseAbiParameters } from 'viem';
 import { HTLC_ABI } from '@/lib/contracts/abis/HTLC';
 import { getContractAddress } from '@/lib/contracts/addresses';
 
@@ -73,6 +73,18 @@ export function useCreateHTLCSwap(chainId: number) {
     }) => {
       const isNativeToken = params.token === '0x0000000000000000000000000000000000000000';
 
+      // Polygon requires higher gas prices
+      const isPolygon = chainId === 137 || chainId === 80002;
+      const gasConfig = isPolygon
+        ? {
+            gas: 500000n,
+            maxFeePerGas: 50000000000n, // 50 Gwei
+            maxPriorityFeePerGas: 30000000000n, // 30 Gwei
+          }
+        : {
+            gas: 500000n,
+          };
+
       return writeContract({
         address: htlcAddress,
         abi: HTLC_ABI,
@@ -86,9 +98,10 @@ export function useCreateHTLCSwap(chainId: number) {
           isNativeToken ? BigInt(0) : params.amount,
         ],
         value: isNativeToken ? params.amount : BigInt(0),
+        ...gasConfig,
       });
     },
-    [writeContract, htlcAddress]
+    [writeContract, htlcAddress, chainId]
   );
 
   return {
@@ -112,14 +125,27 @@ export function useWithdrawHTLC(chainId: number) {
 
   const withdraw = useCallback(
     async (swapId: `0x${string}`, secret: `0x${string}`) => {
+      // Polygon requires higher gas prices
+      const isPolygon = chainId === 137 || chainId === 80002;
+      const gasConfig = isPolygon
+        ? {
+            gas: 300000n,
+            maxFeePerGas: 50000000000n, // 50 Gwei
+            maxPriorityFeePerGas: 30000000000n, // 30 Gwei
+          }
+        : {
+            gas: 300000n,
+          };
+
       return writeContract({
         address: htlcAddress,
         abi: HTLC_ABI,
         functionName: 'withdraw',
         args: [swapId, secret],
+        ...gasConfig,
       });
     },
-    [writeContract, htlcAddress]
+    [writeContract, htlcAddress, chainId]
   );
 
   return {
@@ -143,14 +169,27 @@ export function useRefundHTLC(chainId: number) {
 
   const refund = useCallback(
     async (swapId: `0x${string}`) => {
+      // Polygon requires higher gas prices
+      const isPolygon = chainId === 137 || chainId === 80002;
+      const gasConfig = isPolygon
+        ? {
+            gas: 300000n,
+            maxFeePerGas: 50000000000n, // 50 Gwei
+            maxPriorityFeePerGas: 30000000000n, // 30 Gwei
+          }
+        : {
+            gas: 300000n,
+          };
+
       return writeContract({
         address: htlcAddress,
         abi: HTLC_ABI,
         functionName: 'refund',
         args: [swapId],
+        ...gasConfig,
       });
     },
-    [writeContract, htlcAddress]
+    [writeContract, htlcAddress, chainId]
   );
 
   return {

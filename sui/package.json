@@ -1,0 +1,22 @@
+{
+  "name": "multi-chain-dex-sui",
+  "version": "0.1.0",
+  "description": "SUI blockchain contracts and deployment scripts for Multi-Chain DEX",
+  "private": true,
+  "scripts": {
+    "build": "sui move build",
+    "test": "sui move test",
+    "deploy": "ts-node scripts/deploy.ts",
+    "init-tokens": "ts-node scripts/init-tokens.ts",
+    "verify": "ts-node scripts/verify.ts"
+  },
+  "dependencies": {
+    "@mysten/sui.js": "^0.54.1",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.19",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}

@@ -1,0 +1,15 @@
+# Environment
+.env
+
+# Build artifacts
+build/
+dist/
+
+# Dependencies
+node_modules/
+
+# Deployment info
+deployment-info.json
+
+# Logs
+*.log

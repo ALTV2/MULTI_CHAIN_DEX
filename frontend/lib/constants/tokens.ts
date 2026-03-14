@@ -1,6 +1,58 @@
 import { sepolia, polygonAmoy } from 'wagmi/chains';
 import { zeroAddress } from 'viem';
 import type { Token } from '@/types/token';
+import { localEth, localPolygon } from '@/lib/contracts/config';
+
+// Local chain tokens — addresses populated from env by scripts/deploy-local.sh
+// Symbols and names are intentionally identical so the UI looks the same in both modes.
+const localTokensByChain: Record<number | string, Token[]> = {
+  [localEth.id]: [
+    {
+      address: zeroAddress,
+      symbol: 'ETH',
+      name: 'Ethereum',
+      decimals: 18,
+      logoURI: '/tokens/eth.svg',
+    },
+    {
+      address: (process.env.NEXT_PUBLIC_LOCAL_ETH_TEST_TOKEN_A || zeroAddress) as `0x${string}`,
+      symbol: 'TKA',
+      name: 'Test Token A',
+      decimals: 18,
+      logoURI: '/tokens/tka.svg',
+    },
+    {
+      address: (process.env.NEXT_PUBLIC_LOCAL_ETH_TEST_TOKEN_B || zeroAddress) as `0x${string}`,
+      symbol: 'TKB',
+      name: 'Test Token B',
+      decimals: 18,
+      logoURI: '/tokens/tkb.svg',
+    },
+  ],
+  [localPolygon.id]: [
+    {
+      address: zeroAddress,
+      symbol: 'MATIC',
+      name: 'MATIC',
+      decimals: 18,
+      logoURI: '/tokens/matic.svg',
+    },
+    {
+      address: (process.env.NEXT_PUBLIC_LOCAL_POLYGON_TEST_TOKEN_A || zeroAddress) as `0x${string}`,
+      symbol: 'pTka',
+      name: 'Polygon Test Token A',
+      decimals: 18,
+      logoURI: '/tokens/tka.svg',
+    },
+    {
+      address: (process.env.NEXT_PUBLIC_LOCAL_POLYGON_TEST_TOKEN_B || zeroAddress) as `0x${string}`,
+      symbol: 'pTkb',
+      name: 'Polygon Test Token B',
+      decimals: 18,
+      logoURI: '/tokens/tkb.svg',
+    },
+  ],
+};
 
 export const tokensByChain: Record<number | string, Token[]> = {
   [sepolia.id]: [
@@ -170,6 +222,8 @@ export const tokensByChain: Record<number | string, Token[]> = {
       logoURI: '/tokens/tkb.svg',
     },
   ],
+  // Local chain tokens (merged in below)
+  ...localTokensByChain,
 };
 
 // O(1) lookup index: chainId -> lowercase address -> Token
@@ -209,7 +263,7 @@ export function isNativeToken(chainId: number | string, address: string): boolea
     return address === zeroAddress;
   }
   // SUI uses special type for native token
-  if (chainId === 'sui:testnet' || chainId === 'sui:mainnet') {
+  if (typeof chainId === 'string' && chainId.startsWith('sui:')) {
     return address === '0x2::sui::SUI';
   }
   return false;

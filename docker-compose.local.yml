@@ -1,0 +1,108 @@
+# =============================================================
+# Local Blockchain Development Environment
+# =============================================================
+# Usage:
+#   docker compose -f docker-compose.local.yml up -d
+#   ./scripts/deploy-local.sh        ← first time only
+#   node scripts/setup-local.js      ← first time only
+#   cd frontend && npm run dev
+#
+# Chain IDs:
+#   Local Ethereum  → chainId 31337  → http://localhost:8545
+#   Local Polygon   → chainId 31338  → http://localhost:8546
+#
+# State persistence:
+#   Anvil state (contracts, balances, txs) is saved to Docker volumes.
+#   Restarting containers does NOT reset the blockchain.
+#   To fully reset: docker compose -f docker-compose.local.yml down -v
+# =============================================================
+
+services:
+
+  # ----------------------------------------------------------
+  # Anvil — Local Ethereum node (chainId 31337)
+  # State persisted in anvil_eth_state volume → survives restarts
+  # ----------------------------------------------------------
+  anvil-eth:
+    image: ghcr.io/foundry-rs/foundry:latest
+    entrypoint: ["anvil"]
+    command:
+      - "--host=0.0.0.0"
+      - "--port=8545"
+      - "--chain-id=31337"
+      - "--accounts=10"
+      - "--balance=10000"
+      - "--block-time=2"
+      - "--state=/data/state.json"
+    stop_signal: SIGINT
+    stop_grace_period: 10s
+    ports:
+      - "8545:8545"
+    volumes:
+      - anvil_eth_state:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cast block-number --rpc-url http://localhost:8545 > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    networks:
+      - local-net
+
+  # ----------------------------------------------------------
+  # Anvil — Local Polygon node (chainId 31338, port 8546)
+  # State persisted in anvil_polygon_state volume → survives restarts
+  # ----------------------------------------------------------
+  anvil-polygon:
+    image: ghcr.io/foundry-rs/foundry:latest
+    entrypoint: ["anvil"]
+    command:
+      - "--host=0.0.0.0"
+      - "--port=8546"
+      - "--chain-id=31338"
+      - "--accounts=10"
+      - "--balance=10000"
+      - "--block-time=2"
+      - "--state=/data/state.json"
+    stop_signal: SIGINT
+    stop_grace_period: 10s
+    ports:
+      - "8546:8546"
+    volumes:
+      - anvil_polygon_state:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cast block-number --rpc-url http://localhost:8546 > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    networks:
+      - local-net
+
+  # ----------------------------------------------------------
+  # PostgreSQL (same as production)
+  # ----------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: multichain_dex
+      POSTGRES_USER: dex
+      POSTGRES_PASSWORD: dex_password
+    volumes:
+      - local_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dex -d multichain_dex"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - local-net
+
+networks:
+  local-net:
+    driver: bridge
+
+volumes:
+  local_postgres_data:
+  anvil_eth_state:
+  anvil_polygon_state:

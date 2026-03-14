@@ -1,6 +1,7 @@
 import { sepolia, polygonAmoy } from 'wagmi/chains';
 import { chainConfig } from '@/lib/contracts/addresses';
 import { tokensByChain } from '@/lib/constants/tokens';
+import { localEth, localPolygon } from '@/lib/contracts/config';
 import type { TokenInfo } from '../types';
 import { chainRegistry } from '../registry';
 import { EvmChainAdapter } from './EvmChainAdapter';
@@ -16,29 +17,26 @@ function convertTokens(chainId: number): TokenInfo[] {
   }));
 }
 
-const sepoliaAdapter = new EvmChainAdapter({
-  chainId: sepolia.id,
-  name: chainConfig[sepolia.id].name,
-  shortName: chainConfig[sepolia.id].shortName,
-  nativeCurrency: chainConfig[sepolia.id].nativeCurrency,
-  blockExplorer: chainConfig[sepolia.id].blockExplorer,
-  color: chainConfig[sepolia.id].color,
-  icon: chainConfig[sepolia.id].icon,
-  tokens: convertTokens(sepolia.id),
-});
+function makeAdapter(chainId: number) {
+  const cfg = (chainConfig as any)[chainId];
+  if (!cfg) throw new Error(`No chainConfig for chainId ${chainId}`);
+  return new EvmChainAdapter({
+    chainId,
+    name: cfg.name,
+    shortName: cfg.shortName,
+    nativeCurrency: cfg.nativeCurrency,
+    blockExplorer: cfg.blockExplorer,
+    color: cfg.color,
+    icon: cfg.icon,
+    tokens: convertTokens(chainId),
+  });
+}
 
-const polygonAmoyAdapter = new EvmChainAdapter({
-  chainId: polygonAmoy.id,
-  name: chainConfig[polygonAmoy.id].name,
-  shortName: chainConfig[polygonAmoy.id].shortName,
-  nativeCurrency: chainConfig[polygonAmoy.id].nativeCurrency,
-  blockExplorer: chainConfig[polygonAmoy.id].blockExplorer,
-  color: chainConfig[polygonAmoy.id].color,
-  icon: chainConfig[polygonAmoy.id].icon,
-  tokens: convertTokens(polygonAmoy.id),
-});
+// Register all 4 EVM chain adapters
+for (const chainId of [localEth.id, localPolygon.id, sepolia.id, polygonAmoy.id]) {
+  chainRegistry.register(String(chainId), makeAdapter(chainId));
+}
 
-chainRegistry.register(String(sepolia.id), sepoliaAdapter);
-chainRegistry.register(String(polygonAmoy.id), polygonAmoyAdapter);
-
-export { sepoliaAdapter, polygonAmoyAdapter };
+// Named exports for backward compat
+export const sepoliaAdapter     = chainRegistry.get(String(sepolia.id))!;
+export const polygonAmoyAdapter = chainRegistry.get(String(polygonAmoy.id))!;

@@ -12,7 +12,7 @@ module dex::trade {
     // ===== Structs =====
 
     /// Trade record for history tracking
-    struct TradeRecord has key {
+    public struct TradeRecord has key {
         id: UID,
         order_id: u64,
         seller: address,
@@ -24,7 +24,7 @@ module dex::trade {
 
     // ===== Events =====
 
-    struct TradeExecuted has copy, drop {
+    public struct TradeExecuted has copy, drop {
         order_id: u64,
         seller: address,
         buyer: address,

@@ -8,12 +8,12 @@ import { getTokensByChainId } from '@/lib/constants/tokens';
 import { useTranslation } from '@/hooks/useTranslation';
 
 interface ChainPairSelectorProps {
-  sourceChainId: number;
-  targetChainId: number;
+  sourceChainId: number | string;
+  targetChainId: number | string;
   sourceToken: string;
   targetToken: string;
-  onSourceChainChange: (chainId: number) => void;
-  onTargetChainChange: (chainId: number) => void;
+  onSourceChainChange: (chainId: number | string) => void;
+  onTargetChainChange: (chainId: number | string) => void;
   onSourceTokenChange: (address: string) => void;
   onTargetTokenChange: (address: string) => void;
 }
@@ -79,7 +79,11 @@ export function ChainPairSelector({
       <div className="flex items-center gap-2 flex-1 w-full">
         <Select
           value={String(sourceChainId)}
-          onChange={(v) => onSourceChainChange(Number(v))}
+          onChange={(v) => {
+            // Check if value is numeric or string chainId
+            const chainId = v.includes(':') ? v : Number(v);
+            onSourceChainChange(chainId);
+          }}
           options={chainOptions}
           label={t('chainPair.fromChain')}
           className="flex-1"
@@ -116,7 +120,11 @@ export function ChainPairSelector({
       <div className="flex items-center gap-2 flex-1 w-full">
         <Select
           value={String(targetChainId)}
-          onChange={(v) => onTargetChainChange(Number(v))}
+          onChange={(v) => {
+            // Check if value is numeric or string chainId
+            const chainId = v.includes(':') ? v : Number(v);
+            onTargetChainChange(chainId);
+          }}
           options={chainOptions}
           label={t('chainPair.toChain')}
           className="flex-1"

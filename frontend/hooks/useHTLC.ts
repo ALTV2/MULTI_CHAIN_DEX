@@ -54,7 +54,7 @@ export function generateSwapId(
 }
 
 export function useCreateHTLCSwap(chainId: number) {
-  const htlcAddress = getContractAddress(chainId, 'htlc');
+  const htlcAddress = getContractAddress(chainId, 'htlc') as `0x${string}`;
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();
 
@@ -115,7 +115,7 @@ export function useCreateHTLCSwap(chainId: number) {
 }
 
 export function useWithdrawHTLC(chainId: number) {
-  const htlcAddress = getContractAddress(chainId, 'htlc');
+  const htlcAddress = getContractAddress(chainId, 'htlc') as `0x${string}`;
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();
 
@@ -159,7 +159,7 @@ export function useWithdrawHTLC(chainId: number) {
 }
 
 export function useRefundHTLC(chainId: number) {
-  const htlcAddress = getContractAddress(chainId, 'htlc');
+  const htlcAddress = getContractAddress(chainId, 'htlc') as `0x${string}`;
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();
 
@@ -203,7 +203,7 @@ export function useRefundHTLC(chainId: number) {
 }
 
 export function useHTLCSwap(chainId: number, swapId: `0x${string}` | undefined) {
-  const htlcAddress = getContractAddress(chainId, 'htlc');
+  const htlcAddress = getContractAddress(chainId, 'htlc') as `0x${string}`;
 
   const { data, isLoading, error, refetch } = useReadContract({
     address: htlcAddress,
@@ -238,7 +238,7 @@ export function useHTLCSwap(chainId: number, swapId: `0x${string}` | undefined) 
 }
 
 export function useIsSwapActive(chainId: number, swapId: `0x${string}` | undefined) {
-  const htlcAddress = getContractAddress(chainId, 'htlc');
+  const htlcAddress = getContractAddress(chainId, 'htlc') as `0x${string}`;
 
   const { data, isLoading, error } = useReadContract({
     address: htlcAddress,

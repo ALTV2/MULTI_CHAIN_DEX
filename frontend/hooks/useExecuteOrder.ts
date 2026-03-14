@@ -29,7 +29,7 @@ export function useExecuteOrder() {
 
   const { writeContractAsync } = useWriteContract();
 
-  const tradeAddress = getContractAddress(chainId, 'trade');
+  const tradeAddress = getContractAddress(chainId, 'trade') as `0x${string}`;
 
   // Wait for transaction
   const { isLoading: isWaiting, isSuccess } = useWaitForTransactionReceipt({
@@ -52,7 +52,7 @@ export function useExecuteOrder() {
         : {};
 
       // If tokenToBuy is NOT a native token (ETH), need to approve ERC20
-      if (!isNativeToken(tokenToBuy) && address) {
+      if (!isNativeToken(chainId, tokenToBuy) && address) {
         console.log('Checking allowance for token:', tokenToBuy);
 
         const client = getPublicClient(chainId);
@@ -100,7 +100,7 @@ export function useExecuteOrder() {
         abi: tradeABI,
         functionName: 'executeOrder',
         args: [orderId],
-        value: isNativeToken(tokenToBuy) ? buyAmount : 0n,
+        value: isNativeToken(chainId, tokenToBuy) ? buyAmount : 0n,
         gas: 500000n,
         ...gasParams,
       });

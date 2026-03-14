@@ -6,7 +6,7 @@ import { CROSS_CHAIN_ORDER_BOOK_ABI } from '@/lib/contracts/abis/CrossChainOrder
 import { getContractAddress } from '@/lib/contracts/addresses';
 
 export function useCompleteOrder(chainId: number) {
-  const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook');
+  const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook') as `0x${string}`;
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();
 

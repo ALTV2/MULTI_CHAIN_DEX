@@ -35,13 +35,13 @@ export function Modal({
             </Dialog.Overlay>
             <Dialog.Content asChild>
               <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
                 transition={{ duration: 0.2 }}
                 className={cn(
-                  'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2',
-                  'w-full max-w-md p-6 z-50',
+                  'fixed left-1/2 top-[5vh] -translate-x-1/2',
+                  'w-full max-w-md max-h-[90vh] overflow-y-auto p-6 z-50',
                   'bg-light-card dark:bg-dark-card',
                   'border border-light-border dark:border-dark-border',
                   'rounded-2xl shadow-xl',

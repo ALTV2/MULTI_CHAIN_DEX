@@ -23,8 +23,9 @@ export function CreateOrderForm() {
   const [buyToken, setBuyToken] = useState<Token | undefined>();
   const [sellAmount, setSellAmount] = useState('');
   const [buyAmount, setBuyAmount] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
 
-  const orderBookAddress = getContractAddress(chainId, 'orderBook');
+  const orderBookAddress = getContractAddress(chainId, 'orderBook') as `0x${string}`;
 
   // Get balance for sell token
   const { balance: sellBalance, formattedBalance: formattedSellBalance } =
@@ -55,10 +56,27 @@ export function CreateOrderForm() {
   // Reset form on success
   useEffect(() => {
     if (isSuccess) {
-      toast.success('Order created successfully!');
+      setIsResetting(true);
+
+      toast.success(
+        <div>
+          <div className="font-semibold">✅ Order created successfully!</div>
+          <div className="text-xs mt-1 opacity-90">
+            Your order is now available in the order book
+          </div>
+        </div>,
+        { duration: 5000 }
+      );
+
+      // Reset form immediately to prevent accidental double-creation
       setSellAmount('');
       setBuyAmount('');
       reset();
+
+      // Allow form to be used again after 1 second
+      setTimeout(() => {
+        setIsResetting(false);
+      }, 1000);
     }
   }, [isSuccess, reset]);
 
@@ -267,10 +285,10 @@ export function CreateOrderForm() {
               type="submit"
               size="lg"
               className="w-full"
-              loading={isCreating}
-              disabled={!isFormValid || isCreating}
+              loading={isCreating || isResetting}
+              disabled={!isFormValid || isCreating || isResetting}
             >
-              Create Order
+              {isCreating ? 'Creating...' : isResetting ? 'Resetting...' : 'Create Order'}
             </Button>
           )}
         </form>

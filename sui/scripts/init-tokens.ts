@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { SuiClient, getFullnodeUrl } from '@mysten/sui.js/client';
 import { Ed25519Keypair } from '@mysten/sui.js/keypairs/ed25519';
+import { decodeSuiPrivateKey } from '@mysten/sui.js/cryptography';
 import { TransactionBlock } from '@mysten/sui.js/transactions';
 import * as dotenv from 'dotenv';
 
@@ -28,13 +29,25 @@ async function main() {
 
   // Validate environment
   const mnemonic = process.env.SUI_MNEMONIC;
-  if (!mnemonic) {
-    throw new Error('SUI_MNEMONIC not set in .env file');
+  const privateKey = process.env.SUI_PRIVATE_KEY;
+
+  if (!mnemonic && !privateKey) {
+    throw new Error('Either SUI_MNEMONIC or SUI_PRIVATE_KEY must be set in .env file');
   }
 
   // Setup client
-  const client = new SuiClient({ url: getFullnodeUrl('testnet') });
-  const keypair = Ed25519Keypair.deriveKeypair(mnemonic);
+  const rpcUrl = process.env.SUI_RPC_URL || getFullnodeUrl('testnet');
+  const client = new SuiClient({ url: rpcUrl });
+
+  // Derive keypair from mnemonic or private key
+  let keypair: Ed25519Keypair;
+  if (privateKey) {
+    const { secretKey } = decodeSuiPrivateKey(privateKey);
+    keypair = Ed25519Keypair.fromSecretKey(secretKey);
+  } else {
+    keypair = Ed25519Keypair.deriveKeypair(mnemonic!);
+  }
+
   const address = keypair.getPublicKey().toSuiAddress();
 
   console.log(`👤 Address: ${address}`);

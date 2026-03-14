@@ -8,11 +8,13 @@ import { orderBookABI } from '@/lib/contracts/abis/OrderBook';
 import { getContractAddress, getSupportedChainIds, getChainConfig } from '@/lib/contracts/addresses';
 import { getTokenByAddress } from '@/lib/constants/tokens';
 import { ORDER_STATUS } from '@/lib/constants/swap';
+import { useSuiOrders } from './useSuiOrders';
+import { formatAmount } from '@/lib/utils/formatAmount';
 
 export interface LiveOrder {
   id: string;
-  sourceChainId: number;
-  targetChainId: number;
+  sourceChainId: number | string;
+  targetChainId: number | string;
   creator: string;
   sellToken: string;
   sellSymbol: string;
@@ -40,13 +42,15 @@ function getClient(chainId: number) {
 }
 
 async function fetchAllActiveOrders(): Promise<LiveOrder[]> {
-  const chainIds = getSupportedChainIds();
+  const allChainIds = getSupportedChainIds();
+  // Filter for EVM chains only (this function uses EVM contracts)
+  const chainIds = allChainIds.filter((id) => typeof id === 'number') as number[];
   const allOrders: LiveOrder[] = [];
 
   // Fetch cross-chain orders
   for (const sourceChainId of chainIds) {
     const client = getClient(sourceChainId);
-    const ccobAddress = getContractAddress(sourceChainId, 'crossChainOrderBook');
+    const ccobAddress = getContractAddress(sourceChainId, 'crossChainOrderBook') as `0x${string}`;
 
     for (const targetChainId of chainIds) {
       if (targetChainId === sourceChainId) continue;
@@ -87,7 +91,7 @@ async function fetchAllActiveOrders(): Promise<LiveOrder[]> {
   for (const chainId of chainIds) {
     try {
       const client = getClient(chainId);
-      const orderBookAddress = getContractAddress(chainId, 'orderBook');
+      const orderBookAddress = getContractAddress(chainId, 'orderBook') as `0x${string}`;
 
       const orderCounter = await client.readContract({
         address: orderBookAddress,
@@ -144,10 +148,59 @@ async function fetchAllActiveOrders(): Promise<LiveOrder[]> {
 }
 
 export function useLiveOrderFeed() {
-  return useQuery({
-    queryKey: ['liveOrderFeed'],
+  // Fetch EVM orders
+  const evmQuery = useQuery({
+    queryKey: ['liveOrderFeed', 'evm'],
     queryFn: fetchAllActiveOrders,
     refetchInterval: 15000,
     staleTime: 10000,
   });
+
+  // Fetch SUI orders (no targetChainId filter - get all)
+  const { orders: suiOrders, isLoading: isSuiLoading } = useSuiOrders();
+
+  // Convert SUI orders to LiveOrder format
+  const suiLiveOrders: LiveOrder[] = suiOrders
+    .filter((order) => order.status === 'Active') // Only active orders
+    .map((order) => {
+      const isCrossChain = order.targetChainId !== 0; // 0 means same-chain in SUI
+      const sourceChainId = 'sui:testnet';
+      const targetChainId = isCrossChain ? order.targetChainId : 'sui:testnet';
+
+      // Try to get token symbols from token list
+      const sellTokenInfo = getTokenByAddress(sourceChainId, order.sellToken);
+      const buyTokenInfo = getTokenByAddress(
+        isCrossChain ? order.targetChainId : sourceChainId,
+        order.buyToken
+      );
+
+      return {
+        id: `sui-${order.id}`,
+        sourceChainId,
+        targetChainId,
+        creator: order.creator,
+        sellToken: order.sellToken,
+        sellSymbol: sellTokenInfo?.symbol || order.sellToken.split('::').pop() || 'Unknown',
+        sellAmount: formatAmount(order.sellAmount, sourceChainId, undefined, sourceChainId),
+        buyToken: order.buyToken,
+        buySymbol: buyTokenInfo?.symbol || order.buyToken.split('::').pop() || 'Unknown',
+        buyAmount: formatAmount(order.buyAmount, targetChainId, undefined, sourceChainId),
+        expiresAt: Number(order.expiresAt),
+      };
+    });
+
+  // Merge EVM and SUI orders
+  const allOrders = [...(evmQuery.data || []), ...suiLiveOrders];
+
+  // Sort by expiry (most recent first) and return top 20
+  const sortedOrders = allOrders
+    .sort((a, b) => b.expiresAt - a.expiresAt)
+    .slice(0, 20);
+
+  return {
+    data: sortedOrders,
+    isLoading: evmQuery.isLoading || isSuiLoading,
+    error: evmQuery.error,
+    refetch: evmQuery.refetch,
+  };
 }

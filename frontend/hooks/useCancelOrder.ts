@@ -18,7 +18,7 @@ export function useCancelOrder() {
 
   const { writeContractAsync } = useWriteContract();
 
-  const orderBookAddress = getContractAddress(chainId, 'orderBook');
+  const orderBookAddress = getContractAddress(chainId, 'orderBook') as `0x${string}`;
 
   // Wait for transaction
   const { isLoading: isWaiting, isSuccess } = useWaitForTransactionReceipt({

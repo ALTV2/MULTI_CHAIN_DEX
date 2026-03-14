@@ -27,7 +27,7 @@ module dex::order_book {
     // ===== Structs =====
 
     /// Generic order for selling CoinA for CoinB
-    struct Order<phantom CoinA, phantom CoinB> has key, store {
+    public struct Order<phantom CoinA, phantom CoinB> has key, store {
         id: UID,
         order_id: u64,
         creator: address,
@@ -38,7 +38,7 @@ module dex::order_book {
     }
 
     /// Shared OrderBook for a specific token pair
-    struct OrderBookPair<phantom CoinA, phantom CoinB> has key {
+    public struct OrderBookPair<phantom CoinA, phantom CoinB> has key {
         id: UID,
         orders: Table<u64, address>,  // order_id -> Order object ID
         next_order_id: u64,
@@ -46,19 +46,19 @@ module dex::order_book {
 
     // ===== Events =====
 
-    struct OrderCreated has copy, drop {
+    public struct OrderCreated has copy, drop {
         order_id: u64,
         creator: address,
         sell_amount: u64,
         buy_amount: u64,
     }
 
-    struct OrderFilled has copy, drop {
+    public struct OrderFilled has copy, drop {
         order_id: u64,
         buyer: address,
     }
 
-    struct OrderCancelled has copy, drop {
+    public struct OrderCancelled has copy, drop {
         order_id: u64,
     }
 

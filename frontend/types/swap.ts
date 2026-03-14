@@ -14,8 +14,8 @@ export type SwapPhase =
 export interface StoredSwapMeta {
   orderId: string;           // CCOB order ID (bigint as string)
   role: SwapRole;
-  sourceChainId: number;     // Chain where the CCOB order was created
-  targetChainId: number;     // Target chain for the swap
+  sourceChainId: number | string;     // Chain where the CCOB order was created (number for EVM, string for SUI)
+  targetChainId: number | string;     // Target chain for the swap (number for EVM, string for SUI)
   secret?: string;           // Only creator stores secret (hex)
   hashlock: string;          // Hashlock (hex)
 
@@ -45,6 +45,7 @@ export interface ActiveSwap {
 
   // On-chain CCOB order status
   orderStatus?: string;
+  expiresAt?: bigint;  // Order expiration timestamp (only for cross-chain orders)
 
   // On-chain HTLC statuses
   creatorHtlcStatus?: string;  // 'Empty' | 'Active' | 'Withdrawn' | 'Refunded'

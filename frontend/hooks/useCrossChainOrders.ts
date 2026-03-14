@@ -54,7 +54,7 @@ function mapOrder(data: any): CrossChainOrder {
 }
 
 export function useCrossChainOrdersForTarget(sourceChainId: number, targetChainId: number) {
-  const ccobAddress = getContractAddress(sourceChainId, 'crossChainOrderBook');
+  const ccobAddress = getContractAddress(sourceChainId, 'crossChainOrderBook') as `0x${string}`;
 
   const query = useQuery({
     queryKey: ['crossChainOrders', sourceChainId, targetChainId],
@@ -99,7 +99,7 @@ export function useCrossChainOrdersForTarget(sourceChainId: number, targetChainI
 
 export function useMyeCrossChainOrders(chainId: number) {
   const { address } = useAccount();
-  const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook');
+  const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook') as `0x${string}`;
 
   const query = useQuery({
     queryKey: ['myeCrossChainOrders', chainId, address],
@@ -142,7 +142,7 @@ export function useMyeCrossChainOrders(chainId: number) {
 }
 
 export function useCreateCrossChainOrder(chainId: number) {
-  const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook');
+  const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook') as `0x${string}`;
   const queryClient = useQueryClient();
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();
@@ -217,7 +217,7 @@ export function useCreateCrossChainOrder(chainId: number) {
 }
 
 export function useMatchCrossChainOrder(chainId: number) {
-  const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook');
+  const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook') as `0x${string}`;
   const queryClient = useQueryClient();
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();
@@ -273,7 +273,7 @@ export function useMatchCrossChainOrder(chainId: number) {
 }
 
 export function useCancelCrossChainOrder(chainId: number) {
-  const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook');
+  const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook') as `0x${string}`;
   const queryClient = useQueryClient();
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();
@@ -335,7 +335,7 @@ export function useCancelCrossChainOrder(chainId: number) {
 }
 
 export function useReactivateCrossChainOrder(chainId: number) {
-  const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook');
+  const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook') as `0x${string}`;
   const queryClient = useQueryClient();
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();

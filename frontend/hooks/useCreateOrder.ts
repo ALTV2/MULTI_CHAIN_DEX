@@ -29,7 +29,7 @@ export function useCreateOrder() {
 
   const { writeContractAsync } = useWriteContract();
 
-  const orderBookAddress = getContractAddress(chainId, 'orderBook');
+  const orderBookAddress = getContractAddress(chainId, 'orderBook') as `0x${string}`;
 
   // Wait for transaction
   const { isLoading: isWaiting, isSuccess } = useWaitForTransactionReceipt({
@@ -73,7 +73,7 @@ export function useCreateOrder() {
         abi: orderBookABI,
         functionName: 'createOrder',
         args: [tokenToSell, tokenToBuy, parsedSellAmount, parsedBuyAmount],
-        value: isNativeToken(tokenToSell) ? parsedSellAmount : 0n,
+        value: isNativeToken(chainId, tokenToSell) ? parsedSellAmount : 0n,
         ...gasParams,
       });
 

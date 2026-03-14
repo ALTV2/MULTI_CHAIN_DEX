@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import Link from 'next/link';
 import { useOrderBook } from '@/hooks/useOrderBook';
-import { useActiveSwaps } from '@/hooks/useActiveSwaps';
+import { useAllUserOrders } from '@/hooks/useAllUserOrders';
 import { getSupportedChainIds } from '@/lib/contracts/addresses';
 import { LiveOrderFeed } from '@/components/orders/LiveOrderFeed';
 import { AboutSection } from '@/components/common/AboutSection';
@@ -14,7 +14,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 export default function HomePage() {
   const { isConnected } = useAccount();
   const { orders: allOrders } = useOrderBook();
-  const { activeSwaps } = useActiveSwaps();
+  const { activeSwaps } = useAllUserOrders();
   const chainCount = getSupportedChainIds().length;
   const { t } = useTranslation();
 
@@ -56,7 +56,7 @@ export default function HomePage() {
       <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
           { label: t('dashboard.stats.activeOrders'), value: allOrders.length, color: 'text-accent-blue' },
-          { label: t('dashboard.stats.activeSwaps'), value: activeSwaps.length, color: 'text-accent-green' },
+          { label: t('dashboard.stats.inProgress'), value: activeSwaps.length, color: 'text-accent-green' },
           { label: t('dashboard.stats.chains'), value: chainCount, color: 'text-accent-purple' },
         ].map((stat) => (
           <Card key={stat.label} variant="glass">
@@ -98,7 +98,7 @@ export default function HomePage() {
           </Card>
         </Link>
 
-        <Link href="/swap" className="block group">
+        <Link href="/orders?tab=myorders" className="block group">
           <Card variant="interactive" className="h-full">
             <CardContent className="space-y-4">
               <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-accent-green to-accent-blue flex items-center justify-center">
@@ -108,10 +108,10 @@ export default function HomePage() {
               </div>
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white group-hover:text-accent-green transition-colors">
-                  {t('dashboard.cta.mySwaps')}
+                  {t('dashboard.cta.myOrders')}
                 </h3>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                  {t('dashboard.cta.mySwapsDesc')}
+                  {t('dashboard.cta.myOrdersDesc')}
                 </p>
               </div>
               <div className="flex items-center gap-2">

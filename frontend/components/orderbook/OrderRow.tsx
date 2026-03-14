@@ -24,7 +24,7 @@ export function OrderRow({ order }: OrderRowProps) {
   const chainId = useChainId();
   const [showDetails, setShowDetails] = useState(false);
 
-  const tradeAddress = getContractAddress(chainId, 'trade');
+  const tradeAddress = getContractAddress(chainId, 'trade') as `0x${string}`;
 
   const isOwnOrder =
     userAddress &&

@@ -2,7 +2,7 @@ import { sepolia, polygonAmoy } from 'wagmi/chains';
 import { zeroAddress } from 'viem';
 import type { Token } from '@/types/token';
 
-export const tokensByChain: Record<number, Token[]> = {
+export const tokensByChain: Record<number | string, Token[]> = {
   [sepolia.id]: [
     {
       address: zeroAddress,
@@ -147,31 +147,54 @@ export const tokensByChain: Record<number, Token[]> = {
       logoURI: '/tokens/wbtc.svg',
     },
   ],
+  'sui:testnet': [
+    {
+      address: '0x2::sui::SUI',
+      symbol: 'SUI',
+      name: 'SUI',
+      decimals: 9,
+      logoURI: '/tokens/sui.svg',
+    },
+    {
+      address: '0x0e1c4290fd26aa735b593afac46f28fc69e8558937c148b9ec0d67429af7fc96::test_token_a::TEST_TOKEN_A',
+      symbol: 'sTKA',
+      name: 'SUI Test Token A',
+      decimals: 9,
+      logoURI: '/tokens/tka.svg',
+    },
+    {
+      address: '0x0e1c4290fd26aa735b593afac46f28fc69e8558937c148b9ec0d67429af7fc96::test_token_b::TEST_TOKEN_B',
+      symbol: 'sTKB',
+      name: 'SUI Test Token B',
+      decimals: 9,
+      logoURI: '/tokens/tkb.svg',
+    },
+  ],
 };
 
 // O(1) lookup index: chainId -> lowercase address -> Token
-const tokenIndex: Record<number, Record<string, Token>> = {};
+const tokenIndex: Record<number | string, Record<string, Token>> = {};
 for (const [chainId, tokens] of Object.entries(tokensByChain)) {
   const map: Record<string, Token> = {};
   for (const token of tokens) {
     map[token.address.toLowerCase()] = token;
   }
-  tokenIndex[Number(chainId)] = map;
+  tokenIndex[chainId] = map;
 }
 
-export function getTokensByChainId(chainId: number): Token[] {
+export function getTokensByChainId(chainId: number | string): Token[] {
   return tokensByChain[chainId] || [];
 }
 
 export function getTokenByAddress(
-  chainId: number,
-  address: `0x${string}`
+  chainId: number | string,
+  address: string
 ): Token | undefined {
   return tokenIndex[chainId]?.[address.toLowerCase()];
 }
 
 export function getTokenBySymbol(
-  chainId: number,
+  chainId: number | string,
   symbol: string
 ): Token | undefined {
   const tokens = getTokensByChainId(chainId);
@@ -180,6 +203,14 @@ export function getTokenBySymbol(
   );
 }
 
-export function isNativeToken(address: `0x${string}`): boolean {
-  return address === zeroAddress;
+export function isNativeToken(chainId: number | string, address: string): boolean {
+  // EVM chains use zero address for native token
+  if (typeof chainId === 'number') {
+    return address === zeroAddress;
+  }
+  // SUI uses special type for native token
+  if (chainId === 'sui:testnet' || chainId === 'sui:mainnet') {
+    return address === '0x2::sui::SUI';
+  }
+  return false;
 }

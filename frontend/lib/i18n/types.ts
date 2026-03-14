@@ -4,7 +4,6 @@ export interface Translations {
   // Navigation
   'nav.dashboard': string;
   'nav.orders': string;
-  'nav.mySwaps': string;
   'nav.profile': string;
 
   // Dashboard
@@ -12,12 +11,12 @@ export interface Translations {
   'dashboard.title': string;
   'dashboard.subtitle': string;
   'dashboard.stats.activeOrders': string;
-  'dashboard.stats.activeSwaps': string;
+  'dashboard.stats.inProgress': string;
   'dashboard.stats.chains': string;
   'dashboard.cta.createOrder': string;
   'dashboard.cta.createOrderDesc': string;
-  'dashboard.cta.mySwaps': string;
-  'dashboard.cta.mySwapsDesc': string;
+  'dashboard.cta.myOrders': string;
+  'dashboard.cta.myOrdersDesc': string;
   'dashboard.liveFeed.title': string;
   'dashboard.liveFeed.empty': string;
   'dashboard.howItWorks.title': string;
@@ -47,6 +46,14 @@ export interface Translations {
   'orders.subtitle': string;
   'orders.browseOrders': string;
   'orders.createOrder': string;
+  'orders.myOrders': string;
+  'orders.inProgress': string;
+  'orders.open': string;
+  'orders.history': string;
+  'orders.connectWallet': string;
+  'orders.connectWalletDesc': string;
+  'orders.noOrders': string;
+  'orders.noOrdersDesc': string;
   'orders.sameChain': string;
   'orders.crossChain': string;
   'orders.table.price': string;
@@ -70,23 +77,7 @@ export interface Translations {
   'chainPair.swap': string;
   'chainPair.customToken': string;
 
-  // Swap
-  'swap.title': string;
-  'swap.subtitle': string;
-  'swap.createSwap': string;
-  'swap.availableOrders': string;
-  'swap.mySwaps': string;
-  'swap.connectWallet': string;
-  'swap.connectWalletDesc': string;
-  'swap.howItWorks.title': string;
-  'swap.howItWorks.step1.title': string;
-  'swap.howItWorks.step1.desc': string;
-  'swap.howItWorks.step2.title': string;
-  'swap.howItWorks.step2.desc': string;
-  'swap.howItWorks.step3.title': string;
-  'swap.howItWorks.step3.desc': string;
-
-  // Swap Form
+  // Order Form (cross-chain)
   'swapForm.title': string;
   'swapForm.sellOn': string;
   'swapForm.buyOn': string;
@@ -119,7 +110,7 @@ export interface Translations {
   'profile.tabs.history': string;
   'profile.tabs.settings': string;
   'profile.balance': string;
-  'profile.activeSwaps': string;
+  'profile.inProgress': string;
   'profile.completed': string;
   'profile.chainBalances': string;
   'profile.connected': string;

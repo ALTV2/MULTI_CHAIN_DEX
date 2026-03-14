@@ -8,7 +8,7 @@ module dex::test_token_a {
     use std::option;
 
     /// One-time witness for coin creation
-    struct TEST_TOKEN_A has drop {}
+    public struct TEST_TOKEN_A has drop {}
 
     /// Initialize the token on deployment
     /// Creates currency and transfers treasury to deployer

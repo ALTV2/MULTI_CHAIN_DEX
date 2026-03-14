@@ -29,9 +29,12 @@ async function scanBlockchainForSwaps(walletAddress: string): Promise<number> {
   let discovered = 0;
 
   for (const chainId of chainIds) {
+    // Skip non-EVM chains (this function scans EVM contracts only)
+    if (typeof chainId !== 'number') continue;
+
     try {
       const client = getPublicClient(chainId);
-      const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook');
+      const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook') as `0x${string}`;
 
       // 1. Find orders where user is creator (using getOrdersByCreator)
       try {
@@ -171,7 +174,7 @@ async function discoverHTLCSwap(
   matchHashlock?: string
 ): Promise<{ swapId: string; hashlock: string; status: string; timelock: bigint } | null> {
   try {
-    const htlcAddress = getContractAddress(chainId, 'htlc');
+    const htlcAddress = getContractAddress(chainId, 'htlc') as `0x${string}`;
     const swapIds = await client.readContract({
       address: htlcAddress,
       abi: HTLC_ABI,
@@ -248,7 +251,7 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
     const updates: Partial<StoredSwapMeta> = {};
 
     // Step 1: Fetch CCOB order status from source chain, sync matcher
-    const ccobAddress = getContractAddress(meta.sourceChainId, 'crossChainOrderBook');
+    const ccobAddress = getContractAddress(meta.sourceChainId, 'crossChainOrderBook') as `0x${string}`;
     let orderStatus: string | undefined;
     let expiresAt: bigint | undefined;
 
@@ -308,7 +311,7 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
     // Fetch creator HTLC status if we have the swap ID (and didn't already fetch via discovery)
     if (meta.creatorHtlcSwapId && !creatorHtlcStatus) {
       try {
-        const htlcAddress = getContractAddress(meta.sourceChainId, 'htlc');
+        const htlcAddress = getContractAddress(meta.sourceChainId, 'htlc') as `0x${string}`;
         const swapData = await sourceClient.readContract({
           address: htlcAddress,
           abi: HTLC_ABI,
@@ -366,7 +369,7 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
     // Fetch matcher HTLC status if we have the swap ID (and didn't already fetch via discovery)
     if (meta.matcherHtlcSwapId && !matcherHtlcStatus) {
       try {
-        const htlcAddress = getContractAddress(meta.targetChainId, 'htlc');
+        const htlcAddress = getContractAddress(meta.targetChainId, 'htlc') as `0x${string}`;
         const swapData = await targetClient.readContract({
           address: htlcAddress,
           abi: HTLC_ABI,
@@ -413,7 +416,7 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
     let fallbackExpiresAt: bigint | undefined;
     try {
       const sourceClient = getPublicClient(meta.sourceChainId);
-      const ccobAddress = getContractAddress(meta.sourceChainId, 'crossChainOrderBook');
+      const ccobAddress = getContractAddress(meta.sourceChainId, 'crossChainOrderBook') as `0x${string}`;
       const orderData = await sourceClient.readContract({
         address: ccobAddress,
         abi: CROSS_CHAIN_ORDER_BOOK_ABI,

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAccount } from 'wagmi';
+import { useCurrentAccount } from '@mysten/dapp-kit';
 import { formatUnits } from 'viem';
 import { orderBookABI } from '@/lib/contracts/abis/OrderBook';
 import { getContractAddress, getSupportedChainIds } from '@/lib/contracts/addresses';
@@ -10,6 +11,8 @@ import { getTokenByAddress } from '@/lib/constants/tokens';
 import { ORDER_STATUS } from '@/lib/constants/swap';
 import type { ActiveSwap, SwapPhase } from '@/types/swap';
 import { useActiveSwaps } from './useActiveSwaps';
+import { useSuiUserOrders } from './useSuiUserOrders';
+import type { SuiOrder } from './useSuiOrders';
 
 interface SameChainOrder {
   id: bigint;
@@ -27,13 +30,15 @@ interface SameChainOrder {
  * Scan all supported chains for same-chain orders where user is the creator
  */
 async function fetchUserSameChainOrders(walletAddress: string): Promise<SameChainOrder[]> {
-  const chainIds = getSupportedChainIds();
+  const allChainIds = getSupportedChainIds();
+  // Filter for EVM chains only (same-chain orders use EVM contracts)
+  const chainIds = allChainIds.filter((id) => typeof id === 'number') as number[];
   const allOrders: SameChainOrder[] = [];
 
   for (const chainId of chainIds) {
     try {
       const client = getPublicClient(chainId);
-      const orderBookAddress = getContractAddress(chainId, 'orderBook');
+      const orderBookAddress = getContractAddress(chainId, 'orderBook') as `0x${string}`;
 
       // Get total number of orders
       const orderCounter = await client.readContract({
@@ -83,15 +88,19 @@ async function fetchUserSameChainOrders(walletAddress: string): Promise<SameChai
 }
 
 /**
- * Unified hook that combines both cross-chain and same-chain orders
+ * Unified hook that combines both cross-chain and same-chain orders (EVM + SUI)
  */
 export function useAllUserOrders() {
-  const { address } = useAccount();
+  const { address } = useAccount(); // EVM wallet
+  const suiAccount = useCurrentAccount(); // SUI wallet
   const { swaps: crossChainSwaps, isLoading: isCrossChainLoading, refetch: refetchCrossChain } = useActiveSwaps();
 
   const [sameChainOrders, setSameChainOrders] = useState<SameChainOrder[]>([]);
   const [isSameChainLoading, setIsSameChainLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(0);
+
+  // Fetch SUI orders for current SUI wallet
+  const { orders: suiOrders, isLoading: isSuiLoading } = useSuiUserOrders();
 
   const fetchSameChain = useCallback(async () => {
     if (!address) {
@@ -151,10 +160,56 @@ export function useAllUserOrders() {
     });
   }, [sameChainOrders]);
 
-  // Merge cross-chain and same-chain orders
+  // Convert SUI orders to ActiveSwap format
+  const suiOrdersAsSwaps = useMemo<ActiveSwap[]>(() => {
+    return suiOrders.map((order) => {
+      let phase: SwapPhase = 'order_created';
+      let orderStatus = 'Active';
+
+      if (order.status === 'Completed') {
+        phase = 'completed';
+        orderStatus = 'Completed';
+      } else if (order.status === 'Cancelled') {
+        phase = 'refunded';
+        orderStatus = 'Cancelled';
+      } else if (order.status === 'Matched') {
+        phase = 'htlc_created'; // Matched order moves to HTLC phase
+        orderStatus = 'Matched';
+      }
+
+      const isCrossChain = order.targetChainId !== 0; // 0 = same-chain SUI, otherwise cross-chain
+
+      return {
+        meta: {
+          orderId: `sui-${order.id}`,
+          role: 'creator' as const,
+          sourceChainId: 'sui:testnet',
+          targetChainId: isCrossChain ? order.targetChainId : 'sui:testnet',
+          hashlock: '',
+          sellToken: order.sellToken,
+          sellAmount: order.sellAmount.toString(),
+          buyToken: order.buyToken,
+          buyAmount: order.buyAmount.toString(),
+          creator: order.creator,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+        phase,
+        orderStatus,
+        expiresAt: order.expiresAt,
+      };
+    });
+  }, [suiOrders]);
+
+  // Merge cross-chain, same-chain, and SUI orders
   const allSwaps = useMemo(() => {
-    return [...crossChainSwaps, ...sameChainAsSwaps];
-  }, [crossChainSwaps, sameChainAsSwaps]);
+    console.log('[useAllUserOrders] Merging orders:', {
+      crossChain: crossChainSwaps.length,
+      sameChain: sameChainAsSwaps.length,
+      sui: suiOrdersAsSwaps.length,
+    });
+    return [...crossChainSwaps, ...sameChainAsSwaps, ...suiOrdersAsSwaps];
+  }, [crossChainSwaps, sameChainAsSwaps, suiOrdersAsSwaps]);
 
   const activeSwaps = useMemo(
     () => {
@@ -212,7 +267,7 @@ export function useAllUserOrders() {
     [allSwaps]
   );
 
-  const isLoading = isCrossChainLoading || isSameChainLoading;
+  const isLoading = isCrossChainLoading || isSameChainLoading || isSuiLoading;
 
   return {
     swaps: allSwaps,
@@ -223,5 +278,6 @@ export function useAllUserOrders() {
     // Separate counts for debugging/stats
     crossChainCount: crossChainSwaps.length,
     sameChainCount: sameChainOrders.length,
+    suiCount: suiOrders.length,
   };
 }

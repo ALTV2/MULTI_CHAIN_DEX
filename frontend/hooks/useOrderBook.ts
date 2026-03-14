@@ -18,7 +18,7 @@ export function useOrderBook() {
   const chainId = useChainId();
   const queryClient = useQueryClient();
 
-  const orderBookAddress = getContractAddress(chainId, 'orderBook');
+  const orderBookAddress = getContractAddress(chainId, 'orderBook') as `0x${string}`;
 
   const query = useQuery({
     queryKey: ['orderBook', chainId],

@@ -12,7 +12,7 @@ import type { Order } from '@/types/order';
  * Fetch orders from a specific chain's OrderBook contract
  */
 export function useOrderBookForChain(chainId: number) {
-  const orderBookAddress = getContractAddress(chainId, 'orderBook');
+  const orderBookAddress = getContractAddress(chainId, 'orderBook') as `0x${string}`;
 
   const query = useQuery({
     queryKey: ['orderBook', chainId],

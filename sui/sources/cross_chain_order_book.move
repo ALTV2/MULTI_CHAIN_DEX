@@ -36,7 +36,7 @@ module dex::cross_chain_order_book {
     // ===== Structs =====
 
     /// Order structure for cross-chain swaps
-    struct Order has store, copy, drop {
+    public struct Order has store, copy, drop {
         id: u64,
         creator: address,
 
@@ -62,7 +62,7 @@ module dex::cross_chain_order_book {
     }
 
     /// Shared OrderBook object
-    struct OrderBook has key {
+    public struct OrderBook has key {
         id: UID,
         orders: Table<u64, Order>,
         next_order_id: u64,
@@ -72,7 +72,7 @@ module dex::cross_chain_order_book {
 
     // ===== Events =====
 
-    struct OrderCreated has copy, drop {
+    public struct OrderCreated has copy, drop {
         order_id: u64,
         creator: address,
         source_chain_id: u64,
@@ -83,25 +83,25 @@ module dex::cross_chain_order_book {
         buy_amount: u64,
     }
 
-    struct OrderMatched has copy, drop {
+    public struct OrderMatched has copy, drop {
         order_id: u64,
         matcher: address,
         htlc_swap_id: vector<u8>,
     }
 
-    struct OrderCompleted has copy, drop {
+    public struct OrderCompleted has copy, drop {
         order_id: u64,
     }
 
-    struct OrderCancelled has copy, drop {
+    public struct OrderCancelled has copy, drop {
         order_id: u64,
     }
 
-    struct OrderExpired has copy, drop {
+    public struct OrderExpired has copy, drop {
         order_id: u64,
     }
 
-    struct ChainAdded has copy, drop {
+    public struct ChainAdded has copy, drop {
         chain_id: u64,
     }
 

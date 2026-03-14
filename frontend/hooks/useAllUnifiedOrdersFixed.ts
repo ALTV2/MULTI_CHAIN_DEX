@@ -13,9 +13,9 @@ export interface UnifiedOrder extends CrossChainOrder {
   buySymbol: string;
   formattedSellAmount: string;
   formattedBuyAmount: string;
-  // Actual chain IDs as numbers
-  sourceChainIdNum: number;
-  targetChainIdNum: number;
+  // Actual chain IDs as numbers (EVM) or strings (SUI)
+  sourceChainIdNum: number | string;
+  targetChainIdNum: number | string;
 }
 
 /**

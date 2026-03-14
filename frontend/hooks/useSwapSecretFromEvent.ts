@@ -95,7 +95,7 @@ export function useSwapSecretFromEvent(
     setError(null);
 
     try {
-      const htlcAddress = getContractAddress(chainId, 'htlc');
+      const htlcAddress = getContractAddress(chainId, 'htlc') as `0x${string}`;
       const client = getPublicClient(chainId);
 
       // First: verify the HTLC is actually withdrawn (quick contract read)

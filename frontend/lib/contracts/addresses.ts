@@ -26,6 +26,17 @@ export const contractAddresses = {
     testTokenA: '0x711F11CfeD1D00f981BdA0E7B892dDa6f2EA47c5' as const,
     testTokenB: '0xCADe258E49B605cEaCe568A688893589D8E72907' as const,
   },
+  // SUI Testnet
+  'sui:testnet': {
+    // Package ID (used for all modules)
+    htlc: '0x0e1c4290fd26aa735b593afac46f28fc69e8558937c148b9ec0d67429af7fc96' as const,
+    crossChainOrderBook: '0xa58f40f49713b1a878b6f951626c1e7f56211c69c07433d360485d281ab4a4e0' as const,
+    orderBook: '0xa58f40f49713b1a878b6f951626c1e7f56211c69c07433d360485d281ab4a4e0' as const,
+    trade: '0xa58f40f49713b1a878b6f951626c1e7f56211c69c07433d360485d281ab4a4e0' as const,
+    // Test tokens (full type names for SUI)
+    testTokenA: '0x0e1c4290fd26aa735b593afac46f28fc69e8558937c148b9ec0d67429af7fc96::test_token_a::TEST_TOKEN_A' as const,
+    testTokenB: '0x0e1c4290fd26aa735b593afac46f28fc69e8558937c148b9ec0d67429af7fc96::test_token_b::TEST_TOKEN_B' as const,
+  },
 } as const;
 
 // Chain metadata
@@ -46,46 +57,62 @@ export const chainConfig = {
     color: '#8247E5',
     icon: '/chains/polygon.svg',
   },
+  'sui:testnet': {
+    name: 'SUI (Testnet)',
+    shortName: 'SUI',
+    nativeCurrency: { name: 'SUI', symbol: 'SUI', decimals: 9 },
+    blockExplorer: 'https://suiexplorer.com',
+    color: '#4DA2FF',
+    icon: '/chains/sui.svg',
+    type: 'sui' as const,
+  },
 } as const;
 
 export type SupportedChainId = keyof typeof contractAddresses;
 export type ContractName = keyof (typeof contractAddresses)[typeof sepolia.id];
 
 export function getContractAddress(
-  chainId: number,
+  chainId: number | string,
   contract: ContractName
-): `0x${string}` {
+): string {
   const addresses = contractAddresses[chainId as SupportedChainId];
   if (!addresses) {
     throw new Error(`Chain ${chainId} not supported`);
   }
-  const address = addresses[contract];
+  const address = (addresses as any)[contract];
   if (!address) {
     throw new Error(`Contract ${contract} not deployed on chain ${chainId}`);
   }
   return address;
 }
 
-export function isSupportedChain(chainId: number): chainId is SupportedChainId {
+export function isSupportedChain(chainId: number | string): chainId is SupportedChainId {
   return chainId in contractAddresses;
 }
 
-export function getChainConfig(chainId: number) {
+export function getChainConfig(chainId: number | string) {
   return chainConfig[chainId as SupportedChainId];
 }
 
 export function getSupportedChainIds(): SupportedChainId[] {
-  return Object.keys(contractAddresses).map(Number) as SupportedChainId[];
+  return Object.keys(contractAddresses) as SupportedChainId[];
 }
 
-export function getExplorerTxUrl(chainId: number, txHash: string): string {
+export function getExplorerTxUrl(chainId: number | string, txHash: string): string {
   const config = chainConfig[chainId as SupportedChainId];
   if (!config) return '';
+  if (typeof chainId === 'string' && chainId.startsWith('sui:')) {
+    // SUI explorer uses /txblock/ instead of /tx/
+    return `${config.blockExplorer}/txblock/${txHash}?network=testnet`;
+  }
   return `${config.blockExplorer}/tx/${txHash}`;
 }
 
-export function getExplorerAddressUrl(chainId: number, address: string): string {
+export function getExplorerAddressUrl(chainId: number | string, address: string): string {
   const config = chainConfig[chainId as SupportedChainId];
   if (!config) return '';
+  if (typeof chainId === 'string' && chainId.startsWith('sui:')) {
+    return `${config.blockExplorer}/address/${address}?network=testnet`;
+  }
   return `${config.blockExplorer}/address/${address}`;
 }

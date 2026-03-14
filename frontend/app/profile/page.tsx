@@ -11,7 +11,7 @@ import { Tabs, TabPanel } from '@/components/ui/Tabs';
 import { WalletList } from '@/components/profile/WalletList';
 import { SwapHistoryTable } from '@/components/profile/SwapHistoryTable';
 import { useCurrentUser } from '@/hooks/useAuth';
-import { useActiveSwaps } from '@/hooks/useActiveSwaps';
+import { useAllUserOrders } from '@/hooks/useAllUserOrders';
 import { useSettingsStore, type SecretStorageMode } from '@/stores/useSettingsStore';
 import { chainConfig, SupportedChainId, getSupportedChainIds } from '@/lib/contracts/addresses';
 import { supportedChains } from '@/lib/contracts/config';
@@ -24,7 +24,7 @@ export default function ProfilePage() {
   const { data: balance } = useBalance({ address });
   const { disconnect } = useDisconnect();
   const { isAuthenticated } = useCurrentUser();
-  const { activeSwaps, historySwaps } = useActiveSwaps();
+  const { activeSwaps, historySwaps } = useAllUserOrders();
   const { t } = useTranslation();
   const initialTab = searchParams.get('tab') || 'overview';
   const [activeTab, setActiveTab] = useState(initialTab);
@@ -113,7 +113,7 @@ export default function ProfilePage() {
 
             <Card variant="glass">
               <CardContent className="space-y-3">
-                <span className="text-sm text-gray-500">{t('profile.activeSwaps')}</span>
+                <span className="text-sm text-gray-500">{t('profile.inProgress')}</span>
                 <div className="text-3xl font-bold text-accent-blue">{activeSwaps.length}</div>
               </CardContent>
             </Card>

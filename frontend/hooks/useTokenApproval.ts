@@ -31,7 +31,7 @@ export function useTokenApproval(
   const allowanceQuery = useQuery({
     queryKey: ['allowance', tokenAddress, userAddress, spenderAddress],
     queryFn: async () => {
-      if (!publicClient || !userAddress || !tokenAddress || isNativeToken(tokenAddress)) {
+      if (!publicClient || !userAddress || !tokenAddress || isNativeToken(chainId, tokenAddress)) {
         return maxUint256; // ETH doesn't need approval
       }
 
@@ -46,7 +46,7 @@ export function useTokenApproval(
       !!publicClient &&
       !!userAddress &&
       !!tokenAddress &&
-      !isNativeToken(tokenAddress),
+      !isNativeToken(chainId, tokenAddress),
   });
 
   // Wait for approval transaction (only when txHash is available)
@@ -74,7 +74,7 @@ export function useTokenApproval(
   // Approve mutation
   const approveMutation = useMutation({
     mutationFn: async () => {
-      if (!tokenAddress || isNativeToken(tokenAddress)) {
+      if (!tokenAddress || isNativeToken(chainId, tokenAddress)) {
         throw new Error('Cannot approve ETH');
       }
 
@@ -106,7 +106,7 @@ export function useTokenApproval(
 
   const allowance = allowanceQuery.data ?? 0n;
   const needsApproval =
-    tokenAddress && !isNativeToken(tokenAddress) && allowance < amount;
+    tokenAddress && !isNativeToken(chainId, tokenAddress) && allowance < amount;
 
   return {
     allowance,

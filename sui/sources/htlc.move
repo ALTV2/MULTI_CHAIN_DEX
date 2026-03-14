@@ -10,8 +10,8 @@ module dex::htlc {
     use sui::balance::{Self, Balance};
     use sui::clock::{Self, Clock};
     use sui::event;
+    use sui::hash::keccak256;
     use std::vector;
-    use std::hash::keccak256;
 
     // ===== Error Codes =====
 
@@ -35,7 +35,7 @@ module dex::htlc {
     // ===== Structs =====
 
     /// Shared Swap object (both parties can interact)
-    struct Swap<phantom T> has key {
+    public struct Swap<phantom T> has key {
         id: UID,
         swap_id: vector<u8>,        // 32 bytes - deterministic swap ID
         initiator: address,          // Who created the swap
@@ -48,7 +48,7 @@ module dex::htlc {
 
     // ===== Events =====
 
-    struct SwapCreated has copy, drop {
+    public struct SwapCreated has copy, drop {
         swap_id: vector<u8>,
         swap_object_id: address,  // Object ID for querying
         initiator: address,
@@ -58,14 +58,14 @@ module dex::htlc {
         timelock: u64,
     }
 
-    struct SwapWithdrawn has copy, drop {
+    public struct SwapWithdrawn has copy, drop {
         swap_id: vector<u8>,
         swap_object_id: address,
         secret: vector<u8>,        // CRITICAL: Secret revealed here for cross-chain
         participant: address,
     }
 
-    struct SwapRefunded has copy, drop {
+    public struct SwapRefunded has copy, drop {
         swap_id: vector<u8>,
         swap_object_id: address,
         initiator: address,
@@ -161,7 +161,7 @@ module dex::htlc {
         assert!(current_time < swap.timelock, E_TIMELOCK_EXPIRED);
 
         // Verify secret matches hashlock (using keccak256 for EVM compatibility)
-        let computed_hashlock = keccak256(secret);
+        let computed_hashlock = keccak256(&secret);
         assert!(computed_hashlock == swap.hashlock, E_INVALID_SECRET);
 
         // Update status
@@ -258,7 +258,7 @@ module dex::htlc {
 
     /// Generate hashlock from secret (helper for testing)
     public fun generate_hashlock(secret: vector<u8>): vector<u8> {
-        keccak256(secret)
+        keccak256(&secret)
     }
 
     // ===== Test-only Functions =====

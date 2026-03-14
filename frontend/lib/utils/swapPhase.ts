@@ -34,9 +34,31 @@ export function determineSwapPhase(params: {
     return 'completed';
   }
 
-  // If any HTLC is refunded
-  if (creatorHtlcStatus === 'Refunded' || matcherHtlcStatus === 'Refunded') {
+  // Check if current user's HTLC is refunded (role-based)
+  // Creator locks on source chain, matcher locks on target chain
+  const userIsCreator = meta.role === 'creator';
+  const userHtlcStatus = userIsCreator ? creatorHtlcStatus : matcherHtlcStatus;
+  const counterpartyHtlcStatus = userIsCreator ? matcherHtlcStatus : creatorHtlcStatus;
+
+  // If user's own HTLC is refunded, they got their tokens back
+  if (userHtlcStatus === 'Refunded') {
     return 'refunded';
+  }
+
+  // If both HTLCs are refunded (swap failed completely for both sides)
+  if (creatorHtlcStatus === 'Refunded' && matcherHtlcStatus === 'Refunded') {
+    return 'refunded';
+  }
+
+  // If we have an expired timelock but HTLC is not Active, the swap has failed
+  // This catches cases where:
+  // - Creator/matcher created HTLC but already refunded/withdrawn
+  // - Timelock expired while waiting for the other party
+  if (creatorHtlcTimelock && now >= creatorHtlcTimelock && creatorHtlcStatus !== 'Active') {
+    return 'refundable';
+  }
+  if (matcherHtlcTimelock && now >= matcherHtlcTimelock && matcherHtlcStatus !== 'Active') {
+    return 'refundable';
   }
 
   // If matcher's HTLC has been withdrawn (creator revealed the secret)
@@ -64,13 +86,35 @@ export function determineSwapPhase(params: {
     return 'matcher_htlc_created';
   }
 
-  // Only creator's HTLC exists
-  if (creatorHtlcStatus === 'Active' && (!matcherHtlcStatus || matcherHtlcStatus === 'Empty')) {
+  // Only creator's HTLC exists (or matcher refunded already)
+  if (creatorHtlcStatus === 'Active' && (!matcherHtlcStatus || matcherHtlcStatus === 'Empty' || matcherHtlcStatus === 'Refunded')) {
     // Check if timelock expired
     if (creatorHtlcTimelock && now >= creatorHtlcTimelock) {
       return 'refundable';
     }
     return 'creator_htlc_created';
+  }
+
+  // Only matcher's HTLC exists (or creator refunded already)
+  if (matcherHtlcStatus === 'Active' && (!creatorHtlcStatus || creatorHtlcStatus === 'Empty' || creatorHtlcStatus === 'Refunded')) {
+    // Matcher is waiting for creator, but creator may have refunded
+    // Check if matcher's timelock expired
+    const matcherTimelock = matcherHtlcTimelock;
+    if (matcherTimelock && now >= matcherTimelock) {
+      return 'refundable';
+    }
+    // Still waiting or can refund
+    return 'refundable';
+  }
+
+  // If counterparty refunded but user's HTLC is still active
+  if (userHtlcStatus === 'Active' && counterpartyHtlcStatus === 'Refunded') {
+    const userTimelock = userIsCreator ? creatorHtlcTimelock : matcherHtlcTimelock;
+    if (userTimelock && now >= userTimelock) {
+      return 'refundable';
+    }
+    // Swap failed, user should refund
+    return 'refundable';
   }
 
   // Order is matched but no HTLCs created yet
@@ -89,32 +133,32 @@ export function getPhaseDescription(phase: SwapPhase, role: string): string {
       matcher: 'Order available for matching',
     },
     order_matched: {
-      creator: 'Order matched! Lock your tokens in HTLC on the source chain',
-      matcher: 'Order matched! Wait for the creator to lock tokens first',
+      creator: 'Order matched! Lock your tokens to start the trade',
+      matcher: 'Order matched! Wait for the initiator to lock tokens first',
     },
     creator_htlc_created: {
-      creator: 'Your tokens are locked. Waiting for matcher to lock their tokens',
-      matcher: 'Creator locked tokens. Now lock your tokens in HTLC on the target chain',
+      creator: 'Your tokens are locked. Waiting for counterparty to lock their tokens',
+      matcher: 'Initiator locked tokens. Now lock your tokens on the target chain',
     },
     matcher_htlc_created: {
-      creator: 'Both sides locked! Withdraw from matcher\'s HTLC to reveal the secret',
-      matcher: 'Both sides locked! Wait for the creator to withdraw (reveal the secret)',
+      creator: 'Both sides locked! Claim your tokens to complete the trade',
+      matcher: 'Both sides locked! Wait for the initiator to claim tokens',
     },
     secret_revealed: {
-      creator: 'Secret revealed! Waiting for matcher to withdraw your locked tokens',
-      matcher: 'Secret revealed! Withdraw from creator\'s HTLC using the revealed secret',
+      creator: 'Claim started! Waiting for counterparty to complete',
+      matcher: 'Initiator claimed! Now claim your tokens to finish the trade',
     },
     completed: {
-      creator: 'Swap completed successfully!',
-      matcher: 'Swap completed successfully!',
+      creator: 'Trade completed successfully!',
+      matcher: 'Trade completed successfully!',
     },
     refundable: {
-      creator: 'Timelock expired. You can refund your locked tokens',
-      matcher: 'Timelock expired. You can refund your locked tokens',
+      creator: 'The timelock has expired. The counterparty did not complete their part. Click below to refund your locked tokens.',
+      matcher: 'The timelock has expired. The initiator did not complete their part. Click below to refund your locked tokens.',
     },
     refunded: {
-      creator: 'Tokens have been refunded',
-      matcher: 'Tokens have been refunded',
+      creator: 'Your tokens have been successfully refunded. The trade was not completed.',
+      matcher: 'Your tokens have been successfully refunded. The trade was not completed.',
     },
   };
 

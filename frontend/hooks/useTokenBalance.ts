@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { useAccount, usePublicClient, useBalance } from 'wagmi';
+import { useAccount, usePublicClient, useBalance, useChainId } from 'wagmi';
 import { erc20ABI } from '@/lib/contracts/abis/ERC20';
 import { isNativeToken } from '@/lib/constants/tokens';
 import { formatUnits } from 'viem';
@@ -12,12 +12,13 @@ export function useTokenBalance(
 ) {
   const { address: userAddress } = useAccount();
   const publicClient = usePublicClient();
+  const chainId = useChainId();
 
   // Use native balance hook for ETH
   const ethBalance = useBalance({
     address: userAddress,
     query: {
-      enabled: !!userAddress && !!tokenAddress && isNativeToken(tokenAddress),
+      enabled: !!userAddress && !!tokenAddress && isNativeToken(chainId, tokenAddress),
     },
   });
 
@@ -25,7 +26,7 @@ export function useTokenBalance(
   const erc20Balance = useQuery({
     queryKey: ['tokenBalance', tokenAddress, userAddress],
     queryFn: async () => {
-      if (!publicClient || !userAddress || !tokenAddress || isNativeToken(tokenAddress)) {
+      if (!publicClient || !userAddress || !tokenAddress || isNativeToken(chainId, tokenAddress)) {
         return 0n;
       }
 
@@ -36,10 +37,10 @@ export function useTokenBalance(
         args: [userAddress],
       });
     },
-    enabled: !!publicClient && !!userAddress && !!tokenAddress && !isNativeToken(tokenAddress),
+    enabled: !!publicClient && !!userAddress && !!tokenAddress && !isNativeToken(chainId, tokenAddress),
   });
 
-  const isEth = tokenAddress ? isNativeToken(tokenAddress) : false;
+  const isEth = tokenAddress ? isNativeToken(chainId, tokenAddress) : false;
   const balance = isEth ? ethBalance.data?.value : erc20Balance.data;
   const isLoading = isEth ? ethBalance.isLoading : erc20Balance.isLoading;
 

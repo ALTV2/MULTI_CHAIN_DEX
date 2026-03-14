@@ -23,4 +23,6 @@ Supproted Chains:
         Sink:
             - Polygon: https://faucet.polygon.technology/
             - Alchemy:
-
+    SUI: SUI testnet
+        Sink:
+            - SUI: https://faucet.sui.io/

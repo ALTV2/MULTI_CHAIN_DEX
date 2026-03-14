@@ -4,10 +4,10 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAccount } from 'wagmi';
-import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { ThemeToggle } from '@/components/common/ThemeToggle';
 import { LoginButton } from '@/components/auth/LoginButton';
 import { UserMenu } from '@/components/auth/UserMenu';
+import { UnifiedWalletButton } from '@/components/wallet/UnifiedWalletButton';
 import { useCurrentUser } from '@/hooks/useAuth';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useLocaleStore } from '@/stores/useLocaleStore';
@@ -46,7 +46,6 @@ type NavItem = {
 const navItems: NavItem[] = [
   { href: '/', labelKey: 'nav.dashboard', iconKey: 'dashboard' },
   { href: '/orders', labelKey: 'nav.orders', iconKey: 'orders' },
-  { href: '/swap', labelKey: 'nav.mySwaps', iconKey: 'swap' },
   { href: '/profile', labelKey: 'nav.profile', iconKey: 'profile' },
 ];
 
@@ -120,14 +119,9 @@ export function Header() {
             <ThemeToggle />
             {isConnected && !isAuthenticated && <LoginButton />}
             {isAuthenticated && <UserMenu />}
-            <ConnectButton
-              chainStatus="icon"
-              showBalance={false}
-              accountStatus={{
-                smallScreen: 'avatar',
-                largeScreen: 'full',
-              }}
-            />
+
+            {/* Unified Wallet Button */}
+            <UnifiedWalletButton />
 
             {/* Mobile menu toggle */}
             <button

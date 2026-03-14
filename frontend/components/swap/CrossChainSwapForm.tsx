@@ -17,6 +17,7 @@ import { generateSecret, generateHashlock } from '@/hooks/useHTLC';
 import { TargetWalletSelector } from '@/components/swap/TargetWalletSelector';
 import { useTranslation } from '@/hooks/useTranslation';
 import type { StoredSwapMeta } from '@/types/swap';
+import { toast } from 'sonner';
 
 const ERC20_BALANCE_ABI = [
   {
@@ -28,7 +29,11 @@ const ERC20_BALANCE_ABI = [
   },
 ] as const;
 
-export function CrossChainSwapForm() {
+interface CrossChainSwapFormProps {
+  onOrderCreated?: () => void;
+}
+
+export function CrossChainSwapForm({ onOrderCreated }: CrossChainSwapFormProps = {}) {
   const { address } = useAccount();
   const chainId = useChainId();
   const { data: balance } = useBalance({ address });
@@ -53,6 +58,7 @@ export function CrossChainSwapForm() {
   );
   const [targetAddress, setTargetAddress] = useState(address || '');
   const [expiryHours, setExpiryHours] = useState('48');
+  const [isResetting, setIsResetting] = useState(false);
 
   const { createOrder, isPending, isConfirming, isSuccess, error } = useCreateCrossChainOrder(chainId);
   const { orders: myOrders, refetch: refetchMyOrders } = useMyeCrossChainOrders(chainId);
@@ -117,15 +123,57 @@ export function CrossChainSwapForm() {
     hashlock: string;
   } | null>(null);
 
+  // Handle transaction status changes with toasts
   useEffect(() => {
-    if (isSuccess && address && pendingOrderRef.current) {
+    let toastId: string | number | undefined;
+
+    if (isPending) {
+      toastId = toast.loading('Submitting transaction...');
+    } else if (isConfirming) {
+      if (toastId) toast.dismiss(toastId);
+      toastId = toast.loading('Waiting for confirmation...');
+    } else if (isSuccess && address && pendingOrderRef.current) {
+      if (toastId) toast.dismiss(toastId);
+
       const pending = pendingOrderRef.current;
       pendingOrderRef.current = null;
+      setIsResetting(true);
 
-      refetchMyOrders().then(({ data }) => {
-        if (data && Array.isArray(data) && data.length > 0) {
+      // Show success toast
+      toast.success(
+        <div>
+          <div className="font-semibold">✅ Order created successfully!</div>
+          <div className="text-xs mt-1 opacity-90">
+            Your cross-chain order is now available in the order book
+          </div>
+        </div>,
+        { duration: 5000 }
+      );
+
+      // Callback to switch to "My Orders" tab
+      if (onOrderCreated) {
+        setTimeout(onOrderCreated, 100);
+      }
+
+      // Save to localStorage in background
+      // Wait a bit to ensure blockchain has the order indexed
+      setTimeout(() => {
+        refetchMyOrders().then(({ data }) => {
+          if (!data || !Array.isArray(data) || data.length === 0) {
+            console.warn('⚠️ refetchMyOrders returned no data, skipping localStorage save');
+            return;
+          }
+
           const latestOrder = data[data.length - 1] as any;
-          const orderId = latestOrder.id?.toString() || `${Date.now()}`;
+
+          // ⚠️ CRITICAL: Validate that we have a real order ID (not 0, not undefined)
+          if (!latestOrder.id || latestOrder.id === 0n || latestOrder.id === '0') {
+            console.error('❌ Invalid order ID, cannot save to localStorage:', latestOrder);
+            return;
+          }
+
+          const orderId = latestOrder.id.toString();
+          console.log('✅ Saving cross-chain order to localStorage:', orderId);
 
           const swapMeta: StoredSwapMeta = {
             orderId,
@@ -144,10 +192,25 @@ export function CrossChainSwapForm() {
           };
 
           saveSwap(address, swapMeta);
-        }
-      });
+        }).catch(err => {
+          console.error('Failed to save order to localStorage:', err);
+        });
+      }, 500); // Wait 500ms for blockchain to index the order
+
+      // Reset form immediately to prevent duplicate creation
+      setSellAmount('');
+      setBuyAmount('');
+
+      // Allow form to be used again after 1 second
+      setTimeout(() => {
+        setIsResetting(false);
+      }, 1000);
     }
-  }, [isSuccess, address, chainId, refetchMyOrders]);
+
+    return () => {
+      if (toastId) toast.dismiss(toastId);
+    };
+  }, [isPending, isConfirming, isSuccess, address, chainId, refetchMyOrders, onOrderCreated]);
 
   const handleCreateOrder = async () => {
     if (!address || !sellAmount || !buyAmount) return;
@@ -191,6 +254,8 @@ export function CrossChainSwapForm() {
     buyAmount &&
     parseFloat(buyAmount) > 0;
 
+  const isProcessing = isPending || isConfirming || isResetting;
+
   const selectedSellSymbol = sourceTokenOptions.find((o) => o.value === sellToken)?.label || 'Token';
   const selectedBuySymbol = targetTokenOptions.find((o) => o.value === buyToken)?.label || 'Token';
 
@@ -218,6 +283,7 @@ export function CrossChainSwapForm() {
               value={sellAmount}
               onChange={(e) => setSellAmount(e.target.value)}
               className="text-2xl bg-transparent border-none p-0 flex-1"
+              disabled={isProcessing}
             />
             <div className="w-44">
               <Select
@@ -226,6 +292,7 @@ export function CrossChainSwapForm() {
                 options={sourceTokenOptions}
                 searchable
                 allowCustom
+                disabled={isProcessing}
               />
             </div>
           </div>
@@ -255,6 +322,7 @@ export function CrossChainSwapForm() {
                 value={String(targetChainId)}
                 onChange={(v) => setTargetChainId(Number(v))}
                 options={chainOptions}
+                disabled={isProcessing}
               />
             </div>
           </div>
@@ -265,6 +333,7 @@ export function CrossChainSwapForm() {
               value={buyAmount}
               onChange={(e) => setBuyAmount(e.target.value)}
               className="text-2xl bg-transparent border-none p-0 flex-1"
+              disabled={isProcessing}
             />
             <div className="w-44">
               <Select
@@ -273,6 +342,7 @@ export function CrossChainSwapForm() {
                 options={targetTokenOptions}
                 searchable
                 allowCustom
+                disabled={isProcessing}
               />
             </div>
           </div>
@@ -297,6 +367,7 @@ export function CrossChainSwapForm() {
             value={expiryHours}
             onChange={setExpiryHours}
             options={expiryOptions}
+            disabled={isProcessing}
           />
           <p className="text-xs text-gray-500 mt-1">{t('swapForm.expiryDesc')}</p>
         </div>
@@ -332,10 +403,13 @@ export function CrossChainSwapForm() {
         <Button
           className="w-full"
           size="lg"
-          disabled={!isFormValid || isPending || isConfirming}
+          disabled={!isFormValid || isPending || isConfirming || isResetting}
+          loading={isPending || isConfirming || isResetting}
           onClick={handleCreateOrder}
         >
-          {isPending || isConfirming ? t('swapForm.creating') : t('swapForm.create')}
+          {isPending || isConfirming ? t('swapForm.creating')
+            : isResetting ? 'Resetting...'
+            : t('swapForm.create')}
         </Button>
       </div>
     </Card>

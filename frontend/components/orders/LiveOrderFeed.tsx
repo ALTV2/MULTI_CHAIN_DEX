@@ -2,6 +2,7 @@
 
 import { motion, AnimatePresence } from 'framer-motion';
 import { Card, CardContent } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
 import { TokenIcon } from '@/components/common/TokenIcon';
 import { getChainConfig } from '@/lib/contracts/addresses';
 import { useLiveOrderFeed, type LiveOrder } from '@/hooks/useLiveOrderFeed';
@@ -25,55 +26,94 @@ function timeUntil(expiresAt: number): string {
 function OrderRow({ order }: { order: LiveOrder }) {
   const srcConfig = getChainConfig(order.sourceChainId);
   const tgtConfig = getChainConfig(order.targetChainId);
+  const isSameChain = order.sourceChainId === order.targetChainId;
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: -12 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: 12 }}
-      className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-light-hover/50 dark:hover:bg-dark-hover/50 transition-colors"
+      initial={{ opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 4 }}
+      transition={{ duration: 0.2 }}
+      className="grid grid-cols-[80px_1fr_auto_1fr_100px_80px] gap-4 items-center px-4 py-3 rounded-lg hover:bg-gradient-to-r hover:from-light-hover/40 hover:to-transparent dark:hover:from-dark-hover/40 dark:hover:to-transparent transition-all duration-200 border border-transparent hover:border-accent-blue/10"
     >
-      {/* Chain flow */}
-      <div className="flex items-center gap-1 flex-shrink-0">
-        {srcConfig?.icon && <img src={srcConfig.icon} alt="" className="w-5 h-5" />}
-        <svg className="w-3 h-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+      {/* Chain Flow */}
+      <div className="flex items-center justify-center gap-1.5">
+        {srcConfig?.icon && (
+          <div className="relative">
+            <img src={srcConfig.icon} alt="" className="w-6 h-6 rounded-full ring-2 ring-white/10" />
+          </div>
+        )}
+        {!isSameChain ? (
+          <>
+            <svg className="w-3.5 h-3.5 text-accent-blue/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+            </svg>
+            {tgtConfig?.icon && (
+              <div className="relative">
+                <img src={tgtConfig.icon} alt="" className="w-6 h-6 rounded-full ring-2 ring-white/10" />
+              </div>
+            )}
+          </>
+        ) : (
+          <Badge variant="info" className="text-[10px] px-1.5 py-0.5">On-Chain</Badge>
+        )}
+      </div>
+
+      {/* Sell Token */}
+      <div className="flex items-center gap-2 min-w-0">
+        <div className="flex-shrink-0">
+          <TokenIcon symbol={order.sellSymbol} size={22} />
+        </div>
+        <div className="flex flex-col min-w-0">
+          <span className="text-sm font-semibold text-gray-900 dark:text-white truncate">
+            {parseFloat(order.sellAmount).toFixed(4)}
+          </span>
+          <span className="text-xs text-gray-500 dark:text-gray-400">
+            {order.sellSymbol}
+          </span>
+        </div>
+      </div>
+
+      {/* Arrow */}
+      <div className="flex items-center justify-center">
+        <svg className="w-4 h-4 text-accent-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
         </svg>
-        {tgtConfig?.icon && <img src={tgtConfig.icon} alt="" className="w-5 h-5" />}
       </div>
 
-      {/* Sell */}
-      <div className="flex items-center gap-1.5 min-w-0">
-        <TokenIcon symbol={order.sellSymbol} size={20} />
-        <span className="text-sm font-medium truncate">
-          {parseFloat(order.sellAmount).toFixed(4)} {order.sellSymbol}
-        </span>
+      {/* Buy Token */}
+      <div className="flex items-center gap-2 min-w-0">
+        <div className="flex-shrink-0">
+          <TokenIcon symbol={order.buySymbol} size={22} />
+        </div>
+        <div className="flex flex-col min-w-0">
+          <span className="text-sm font-semibold text-gray-900 dark:text-white truncate">
+            {parseFloat(order.buyAmount).toFixed(4)}
+          </span>
+          <span className="text-xs text-gray-500 dark:text-gray-400">
+            {order.buySymbol}
+          </span>
+        </div>
       </div>
-
-      <svg className="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-      </svg>
-
-      {/* Buy */}
-      <div className="flex items-center gap-1.5 min-w-0">
-        <TokenIcon symbol={order.buySymbol} size={20} />
-        <span className="text-sm font-medium truncate">
-          {parseFloat(order.buyAmount).toFixed(4)} {order.buySymbol}
-        </span>
-      </div>
-
-      {/* Spacer */}
-      <div className="flex-1" />
 
       {/* Creator */}
-      <span className="text-xs text-gray-500 font-mono hidden sm:block">
-        {truncateAddr(order.creator)}
-      </span>
+      <div className="hidden lg:flex items-center justify-center">
+        <span className="text-xs font-mono text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800/50 px-2 py-1 rounded">
+          {truncateAddr(order.creator)}
+        </span>
+      </div>
 
       {/* Expiry */}
-      <span className="text-xs text-gray-400 flex-shrink-0">
-        {timeUntil(order.expiresAt)}
-      </span>
+      <div className="flex items-center justify-end">
+        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-accent-blue/5 border border-accent-blue/10">
+          <svg className="w-3 h-3 text-accent-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span className="text-xs font-medium text-accent-blue">
+            {timeUntil(order.expiresAt)}
+          </span>
+        </div>
+      </div>
     </motion.div>
   );
 }
@@ -83,40 +123,79 @@ export function LiveOrderFeed() {
   const { t } = useTranslation();
 
   return (
-    <Card variant="glass">
-      <CardContent>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold text-gray-900 dark:text-white">
-            {t('dashboard.liveFeed.title')}
-          </h2>
-          <div className="flex items-center gap-1.5">
-            <span className="relative flex h-2 w-2">
+    <Card variant="glass" className="overflow-hidden">
+      <CardContent className="p-0">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-gradient-to-r from-light-hover/30 to-transparent dark:from-dark-hover/30 dark:to-transparent">
+          <div className="flex items-center gap-3">
+            <div className="w-1 h-6 bg-accent-blue rounded-full" />
+            <h2 className="text-lg font-bold text-gray-900 dark:text-white">
+              {t('dashboard.liveFeed.title')}
+            </h2>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2.5 w-2.5">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-green opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-accent-green" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-accent-green" />
             </span>
-            <span className="text-xs text-gray-400">Live</span>
+            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Live Updates</span>
           </div>
         </div>
 
-        {isLoading ? (
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-10 rounded-xl bg-light-hover/50 dark:bg-dark-hover/50 animate-pulse" />
-            ))}
-          </div>
-        ) : !orders || orders.length === 0 ? (
-          <div className="text-center py-8 text-sm text-gray-400">
-            {t('dashboard.liveFeed.empty')}
-          </div>
-        ) : (
-          <div className="space-y-0.5 max-h-80 overflow-auto">
-            <AnimatePresence mode="popLayout">
-              {orders.map((order) => (
-                <OrderRow key={order.id} order={order} />
-              ))}
-            </AnimatePresence>
+        {/* Column Headers */}
+        {!isLoading && orders && orders.length > 0 && (
+          <div className="grid grid-cols-[80px_1fr_auto_1fr_100px_80px] gap-4 px-4 py-2 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/50">
+            <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase text-center">
+              Route
+            </div>
+            <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase">
+              Selling
+            </div>
+            <div className="w-4" />
+            <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase">
+              Buying
+            </div>
+            <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase text-center hidden lg:block">
+              Creator
+            </div>
+            <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase text-right">
+              Expires
+            </div>
           </div>
         )}
+
+        {/* Content */}
+        <div className="px-2 py-2">
+          {isLoading ? (
+            <div className="space-y-2 px-2">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div
+                  key={i}
+                  className="h-16 rounded-lg bg-gradient-to-r from-light-hover/50 to-light-hover/20 dark:from-dark-hover/50 dark:to-dark-hover/20 animate-pulse"
+                />
+              ))}
+            </div>
+          ) : !orders || orders.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 px-4">
+              <div className="w-16 h-16 mb-4 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+              </div>
+              <p className="text-sm text-gray-500 dark:text-gray-400 text-center">
+                {t('dashboard.liveFeed.empty')}
+              </p>
+            </div>
+          ) : (
+            <div className="max-h-[400px] overflow-y-auto space-y-1">
+              <AnimatePresence mode="popLayout">
+                {orders.map((order) => (
+                  <OrderRow key={order.id} order={order} />
+                ))}
+              </AnimatePresence>
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

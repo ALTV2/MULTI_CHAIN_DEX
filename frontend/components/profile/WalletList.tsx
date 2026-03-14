@@ -1,7 +1,9 @@
 'use client';
 
 import { useAccount, useBalance, useChainId, useSwitchChain } from 'wagmi';
+import { useCurrentAccount, useSuiClient } from '@mysten/dapp-kit';
 import { formatEther } from 'viem';
+import { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -10,10 +12,14 @@ import { chainConfig, SupportedChainId, getExplorerAddressUrl } from '@/lib/cont
 
 export function WalletList() {
   const { address } = useAccount();
+  const suiAccount = useCurrentAccount();
   const chainId = useChainId();
   const { switchChain } = useSwitchChain();
 
-  if (!address) {
+  const hasEvmWallet = !!address;
+  const hasSuiWallet = !!suiAccount;
+
+  if (!hasEvmWallet && !hasSuiWallet) {
     return (
       <Card className="p-6 text-center">
         <p className="text-gray-400">Connect your wallet to view balances</p>
@@ -23,43 +29,79 @@ export function WalletList() {
 
   return (
     <div className="space-y-6">
-      {/* Current Wallet */}
-      <Card className="p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold">Connected Wallet</h3>
-          <Badge variant="success">Active</Badge>
-        </div>
-        <div className="p-4 rounded-lg bg-gray-800/50">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm text-gray-400">Address</span>
-            <a
-              href={getExplorerAddressUrl(chainId, address)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-400 hover:text-blue-300 text-sm"
-            >
-              View on Explorer
-            </a>
+      {/* EVM Wallet */}
+      {hasEvmWallet && (
+        <Card className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold">EVM Wallet</h3>
+            <Badge variant="success">Connected</Badge>
           </div>
-          <p className="font-mono text-sm break-all">{address}</p>
-        </div>
-      </Card>
+          <div className="p-4 rounded-lg bg-gray-800/50">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm text-gray-400">Address</span>
+              <a
+                href={getExplorerAddressUrl(chainId, address!)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-400 hover:text-blue-300 text-sm"
+              >
+                View on Explorer
+              </a>
+            </div>
+            <p className="font-mono text-sm break-all">{address}</p>
+          </div>
+        </Card>
+      )}
 
-      {/* Balances by Chain */}
-      <Card className="p-6">
-        <h3 className="text-lg font-semibold mb-4">Balances by Chain</h3>
-        <div className="space-y-3">
-          {supportedChains.map((chain) => (
-            <ChainBalance
-              key={chain.id}
-              chainId={chain.id}
-              address={address}
-              isActive={chain.id === chainId}
-              onSwitch={() => switchChain?.({ chainId: chain.id })}
-            />
-          ))}
-        </div>
-      </Card>
+      {/* SUI Wallet */}
+      {hasSuiWallet && (
+        <Card className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold">SUI Wallet</h3>
+            <Badge variant="success">Connected</Badge>
+          </div>
+          <div className="p-4 rounded-lg bg-gray-800/50">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm text-gray-400">Address</span>
+              <a
+                href={`https://suiexplorer.com/address/${suiAccount.address}?network=testnet`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-400 hover:text-blue-300 text-sm"
+              >
+                View on Explorer
+              </a>
+            </div>
+            <p className="font-mono text-sm break-all">{suiAccount.address}</p>
+          </div>
+        </Card>
+      )}
+
+      {/* EVM Balances */}
+      {hasEvmWallet && (
+        <Card className="p-6">
+          <h3 className="text-lg font-semibold mb-4">EVM Chain Balances</h3>
+          <div className="space-y-3">
+            {supportedChains.map((chain) => (
+              <ChainBalance
+                key={chain.id}
+                chainId={chain.id}
+                address={address!}
+                isActive={chain.id === chainId}
+                onSwitch={() => switchChain?.({ chainId: chain.id })}
+              />
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* SUI Balance */}
+      {hasSuiWallet && (
+        <Card className="p-6">
+          <h3 className="text-lg font-semibold mb-4">SUI Balance</h3>
+          <SuiBalance address={suiAccount.address} />
+        </Card>
+      )}
 
       {/* Info */}
       <Card className="p-6 bg-blue-500/5 border-blue-500/20">
@@ -140,6 +182,79 @@ function ChainBalance({
             >
               Switch
             </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SuiBalance({ address }: { address: string }) {
+  const client = useSuiClient();
+  const [balance, setBalance] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchBalance = async () => {
+      setIsLoading(true);
+      try {
+        const balanceData = await client.getBalance({
+          owner: address,
+        });
+
+        if (isMounted) {
+          // SUI has 9 decimals
+          const formattedBalance = (Number(balanceData.totalBalance) / 1e9).toFixed(4);
+          setBalance(formattedBalance);
+          setIsLoading(false);
+        }
+      } catch (error) {
+        console.error('Error fetching SUI balance:', error);
+        if (isMounted) {
+          setBalance('0');
+          setIsLoading(false);
+        }
+      }
+    };
+
+    fetchBalance();
+
+    // Poll every 10 seconds
+    const interval = setInterval(fetchBalance, 10000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [client, address]);
+
+  const config = chainConfig['sui:testnet'];
+
+  return (
+    <div className="p-4 rounded-lg bg-gray-800/50">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span
+            className="w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold"
+            style={{ backgroundColor: `${config?.color}20`, color: config?.color }}
+          >
+            S
+          </span>
+          <div>
+            <span className="font-medium">{config?.name}</span>
+            <p className="text-sm text-gray-400">{config?.nativeCurrency.symbol}</p>
+          </div>
+        </div>
+        <div className="text-right">
+          {isLoading ? (
+            <div className="h-6 w-24 bg-gray-700 rounded animate-pulse" />
+          ) : (
+            <p className="text-lg font-semibold">
+              {balance}
+              <span className="text-gray-400 text-sm ml-1">SUI</span>
+            </p>
           )}
         </div>
       </div>

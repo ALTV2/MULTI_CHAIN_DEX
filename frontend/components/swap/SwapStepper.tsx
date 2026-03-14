@@ -5,17 +5,28 @@ import type { SwapPhase } from '@/types/swap';
 import { getPhaseStepIndex } from '@/lib/utils/swapPhase';
 
 const STEPS = [
-  { label: 'Order', description: 'Created' },
-  { label: 'Matched', description: 'Counterparty found' },
-  { label: 'Creator Locked', description: 'Source chain HTLC' },
-  { label: 'Matcher Locked', description: 'Target chain HTLC' },
-  { label: 'Secret Revealed', description: 'Withdrawal started' },
-  { label: 'Completed', description: 'Swap finished' },
+  { label: 'Open' },
+  { label: 'Matched' },
+  { label: 'Lock 1' },
+  { label: 'Lock 2' },
+  { label: 'Claiming' },
+  { label: 'Done' },
 ];
 
-export function SwapStepper({ phase }: { phase: SwapPhase }) {
+const SAME_CHAIN_STEPS = [
+  { label: 'Open' },
+  { label: 'Completed' },
+];
+
+export function SwapStepper({ phase, isSameChain = false }: { phase: SwapPhase; isSameChain?: boolean }) {
   const currentStep = getPhaseStepIndex(phase);
   const isRefund = phase === 'refundable' || phase === 'refunded';
+
+  // For same-chain orders, use simplified steps
+  const steps = isSameChain ? SAME_CHAIN_STEPS : STEPS;
+  const currentStepIndex = isSameChain
+    ? (phase === 'completed' ? 1 : 0)
+    : currentStep;
 
   if (isRefund) {
     return (
@@ -26,7 +37,7 @@ export function SwapStepper({ phase }: { phase: SwapPhase }) {
           </svg>
         </div>
         <span className="text-sm text-red-400 font-medium">
-          {phase === 'refundable' ? 'Timelock Expired - Refund Available' : 'Refunded'}
+          {phase === 'refundable' ? 'Expired — Refund Available' : 'Refunded'}
         </span>
       </div>
     );
@@ -34,10 +45,10 @@ export function SwapStepper({ phase }: { phase: SwapPhase }) {
 
   return (
     <div className="flex items-center w-full py-3 overflow-x-auto">
-      {STEPS.map((step, idx) => {
-        const isCompleted = idx < currentStep;
-        const isCurrent = idx === currentStep;
-        const isFuture = idx > currentStep;
+      {steps.map((step, idx) => {
+        const isCompleted = idx < currentStepIndex;
+        const isCurrent = idx === currentStepIndex;
+        const isFuture = idx > currentStepIndex;
 
         return (
           <div key={step.label} className="flex items-center flex-1 min-w-0">
@@ -72,11 +83,11 @@ export function SwapStepper({ phase }: { phase: SwapPhase }) {
             </div>
 
             {/* Connector line */}
-            {idx < STEPS.length - 1 && (
+            {idx < steps.length - 1 && (
               <div
                 className={cn(
                   'flex-1 h-0.5 mx-1',
-                  idx < currentStep ? 'bg-green-500' : 'bg-gray-700'
+                  idx < currentStepIndex ? 'bg-green-500' : 'bg-gray-700'
                 )}
               />
             )}

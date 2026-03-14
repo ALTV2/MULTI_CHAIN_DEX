@@ -2,15 +2,17 @@
 
 import { useState, useEffect } from 'react';
 import { useAccount } from 'wagmi';
+import { useCurrentAccount } from '@mysten/dapp-kit';
 import { useQuery } from '@tanstack/react-query';
 import { useCurrentUser } from '@/hooks/useAuth';
 import { getWallets, type WalletResponse } from '@/lib/api/wallets';
 import { useSettingsStore } from '@/stores/useSettingsStore';
 import { chainRegistry } from '@/lib/chains/registry';
+import { chainConfig } from '@/lib/contracts/addresses';
 import { cn } from '@/lib/utils/cn';
 
 interface TargetWalletSelectorProps {
-  targetChainId: number;
+  targetChainId: number | string;
   value: string;
   onChange: (address: string) => void;
   className?: string;
@@ -23,13 +25,21 @@ export function TargetWalletSelector({
   className,
 }: TargetWalletSelectorProps) {
   const { address } = useAccount();
+  const suiAccount = useCurrentAccount();
   const { isAuthenticated } = useCurrentUser();
   const defaultWallet = useSettingsStore((s) => s.getDefaultTargetWallet(String(targetChainId)));
   const [mode, setMode] = useState<'connected' | 'saved' | 'custom'>('connected');
   const [customAddress, setCustomAddress] = useState('');
 
-  const adapter = chainRegistry.getAdapter(targetChainId);
-  const chainInfo = adapter?.getChainInfo();
+  // Detect chain type
+  const isSuiChain = typeof targetChainId === 'string';
+  const connectedAddress = isSuiChain ? suiAccount?.address : address;
+
+  // Get chain info - use chainConfig for SUI, chainRegistry for EVM
+  const adapter = !isSuiChain ? chainRegistry.getAdapter(targetChainId as number) : null;
+  const chainInfo = isSuiChain
+    ? chainConfig[targetChainId as string]
+    : adapter?.getChainInfo();
 
   const { data: savedWallets } = useQuery({
     queryKey: ['wallets'],
@@ -47,16 +57,16 @@ export function TargetWalletSelector({
     if (defaultWallet) {
       onChange(defaultWallet);
       setMode('saved');
-    } else if (address) {
-      onChange(address);
+    } else if (connectedAddress) {
+      onChange(connectedAddress);
       setMode('connected');
     }
-  }, [defaultWallet, address]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [defaultWallet, connectedAddress]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleModeChange(newMode: 'connected' | 'saved' | 'custom') {
     setMode(newMode);
-    if (newMode === 'connected' && address) {
-      onChange(address);
+    if (newMode === 'connected' && connectedAddress) {
+      onChange(connectedAddress);
     } else if (newMode === 'saved' && chainWallets.length > 0) {
       onChange(chainWallets[0].address);
     } else if (newMode === 'custom') {
@@ -73,7 +83,10 @@ export function TargetWalletSelector({
     onChange(addr);
   }
 
-  const isValid = !value || !adapter || adapter.isValidAddress(value);
+  // Validate address based on chain type
+  const isValid = !value || (isSuiChain
+    ? value.startsWith('0x') && value.length === 66 // SUI addresses are 32 bytes (64 hex chars + 0x)
+    : adapter?.isValidAddress(value));
 
   return (
     <div className={cn('space-y-3', className)}>

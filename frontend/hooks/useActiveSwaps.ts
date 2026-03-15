@@ -30,11 +30,13 @@ async function scanBlockchainForSwaps(walletAddress: string): Promise<number> {
 
   for (const chainId of chainIds) {
     // Skip non-EVM chains (this function scans EVM contracts only)
-    if (typeof chainId !== 'number') continue;
+    // Note: Object.keys() always returns strings, so check by value not typeof
+    if (String(chainId).startsWith('sui:')) continue;
+    const chainIdNum = Number(chainId);
 
     try {
-      const client = getPublicClient(chainId);
-      const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook') as `0x${string}`;
+      const client = getPublicClient(chainIdNum);
+      const ccobAddress = getContractAddress(chainIdNum, 'crossChainOrderBook') as `0x${string}`;
 
       // 1. Find orders where user is creator (using getOrdersByCreator)
       try {
@@ -45,7 +47,6 @@ async function scanBlockchainForSwaps(walletAddress: string): Promise<number> {
           args: [walletAddress as `0x${string}`],
         }) as any[];
 
-        console.log(`[scan] Chain ${chainId}: ${creatorOrders.length} creator orders`);
 
         for (const order of creatorOrders) {
           const orderId = order.id.toString();
@@ -53,17 +54,16 @@ async function scanBlockchainForSwaps(walletAddress: string): Promise<number> {
           // ⚠️ IMPORTANT: Verify that the wallet is actually the creator
           // This prevents saving matched orders with incorrect role
           if (order.creator.toLowerCase() !== lowerWallet) {
-            console.warn(`[scan] Skipping order ${orderId}: creator mismatch (expected ${lowerWallet}, got ${order.creator.toLowerCase()})`);
             continue;
           }
 
-          const existing = getSwap(walletAddress, orderId, chainId);
+          const existing = getSwap(walletAddress, orderId, chainIdNum);
 
           if (existing) {
             // Update matcher if discovered on-chain but missing locally
             const matchedBy = order.matchedBy as string;
             if (matchedBy && matchedBy !== ZERO_ADDRESS && !existing.matcher) {
-              updateSwap(walletAddress, orderId, { matcher: matchedBy }, chainId);
+              updateSwap(walletAddress, orderId, { matcher: matchedBy }, chainIdNum);
             }
             continue;
           }
@@ -72,7 +72,7 @@ async function scanBlockchainForSwaps(walletAddress: string): Promise<number> {
           const meta: StoredSwapMeta = {
             orderId,
             role: 'creator',
-            sourceChainId: chainId,
+            sourceChainId: chainIdNum,
             targetChainId: Number(order.targetChainId),
             hashlock: '',
             sellToken: order.sellToken,
@@ -99,7 +99,6 @@ async function scanBlockchainForSwaps(walletAddress: string): Promise<number> {
           functionName: 'getTotalOrders',
         }) as bigint;
 
-        console.log(`[scan] Chain ${chainId}: totalOrders=${totalOrders}, scanning for matcher role...`);
 
         // Use <= because contract uses 1-based IDs (order IDs go from 1 to totalOrders)
         for (let i = 0; i <= Number(totalOrders); i++) {
@@ -116,13 +115,12 @@ async function scanBlockchainForSwaps(walletAddress: string): Promise<number> {
 
             // Use on-chain order ID, not loop index
             const orderId = order.id.toString();
-            console.log(`[scan] Chain ${chainId}: order #${orderId} matched by current wallet`);
 
-            const existing = getSwap(walletAddress, orderId, chainId);
+            const existing = getSwap(walletAddress, orderId, chainIdNum);
             if (existing) {
               // Sync creator/matcher if missing
               if (!existing.creator && order.creator) {
-                updateSwap(walletAddress, orderId, { creator: order.creator }, chainId);
+                updateSwap(walletAddress, orderId, { creator: order.creator }, chainIdNum);
               }
               continue;
             }
@@ -130,7 +128,7 @@ async function scanBlockchainForSwaps(walletAddress: string): Promise<number> {
             const meta: StoredSwapMeta = {
               orderId,
               role: 'matcher',
-              sourceChainId: chainId,
+              sourceChainId: chainIdNum,
               targetChainId: Number(order.targetChainId),
               hashlock: '',
               sellToken: order.sellToken,
@@ -144,7 +142,6 @@ async function scanBlockchainForSwaps(walletAddress: string): Promise<number> {
             };
             saveSwap(walletAddress, meta);
             discovered++;
-            console.log(`[scan] Saved matcher swap: order #${orderId} on chain ${chainId}`);
           } catch (err) {
             console.warn(`[scan] Failed to read order ${i} on chain ${chainId}:`, err);
           }
@@ -157,7 +154,6 @@ async function scanBlockchainForSwaps(walletAddress: string): Promise<number> {
     }
   }
 
-  console.log(`[scan] Done. Discovered ${discovered} new swaps.`);
   return discovered;
 }
 
@@ -244,10 +240,21 @@ async function discoverHTLCSwap(
 }
 
 async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string): Promise<ActiveSwap> {
-  console.log(`[fetchSwapOnChainData] Processing order ${meta.orderId} on chain ${meta.sourceChainId}`);
+  // SUI chains are managed separately via useSuiHTLC/useSuiOrders hooks.
+  // Skip EVM-specific on-chain fetching for swaps involving SUI source chains.
+  const isSuiSource = typeof meta.sourceChainId === 'string' && meta.sourceChainId.startsWith('sui:');
+  if (isSuiSource) {
+    return {
+      meta,
+      phase: determineSwapPhase({ meta }),
+    };
+  }
+
   try {
-    const sourceClient = getPublicClient(meta.sourceChainId);
-    const targetClient = getPublicClient(meta.targetChainId);
+    const sourceClient = getPublicClient(meta.sourceChainId as number);
+    // Target may be SUI for EVM→SUI swaps; only create EVM client for EVM targets
+    const isSuiTarget = typeof meta.targetChainId === 'string' && meta.targetChainId.startsWith('sui:');
+    const targetClient = isSuiTarget ? null : getPublicClient(meta.targetChainId as number);
     const updates: Partial<StoredSwapMeta> = {};
 
     // Step 1: Fetch CCOB order status from source chain, sync matcher
@@ -264,8 +271,6 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
       }) as any;
       orderStatus = ORDER_STATUS_MAP[orderData.status] || 'Active';
       expiresAt = orderData.expiresAt as bigint;
-
-      console.log(`[fetchSwapOnChainData] Order ${meta.orderId} on chain ${meta.sourceChainId}: status=${orderStatus}, expiresAt=${expiresAt}`);
 
       const matchedBy = orderData.matchedBy as string;
       if (matchedBy && matchedBy !== ZERO_ADDRESS && !meta.matcher) {
@@ -285,7 +290,7 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
       // Scan on-chain: creator created an HTLC on source chain with matcher as participant
       const hashlockFilter = meta.hashlock || undefined;
       const found = await discoverHTLCSwap(
-        sourceClient, meta.sourceChainId,
+        sourceClient, meta.sourceChainId as number,
         meta.creator, meta.matcher,
         hashlockFilter
       );
@@ -300,7 +305,6 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
           creatorHtlcTimelock = found.timelock;
           // ALWAYS sync hashlock from creator's HTLC (overwrite if different)
           if (found.hashlock && found.hashlock !== meta.hashlock) {
-            console.log(`[fetchSwapOnChainData] ⚠️ Syncing hashlock from creator HTLC for order ${meta.orderId}: ${found.hashlock} (was: ${meta.hashlock})`);
             updates.hashlock = found.hashlock;
             meta = { ...meta, hashlock: found.hashlock };
           }
@@ -322,7 +326,6 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
         creatorHtlcTimelock = swapData.timelock;
         // ALWAYS sync hashlock from creator's HTLC (overwrite if different)
         if (swapData.hashlock && swapData.hashlock !== meta.hashlock) {
-          console.log(`[fetchSwapOnChainData] ⚠️ Syncing hashlock from creator HTLC for order ${meta.orderId}: ${swapData.hashlock} (was: ${meta.hashlock})`);
           updates.hashlock = swapData.hashlock;
           meta = { ...meta, hashlock: swapData.hashlock };
         }
@@ -331,55 +334,41 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
       }
     }
 
-    // Step 3: Discover matcher's HTLC on target chain if not known
+    // Step 3: Discover matcher's HTLC on target chain if not known (EVM target only)
     let matcherHtlcStatus: string | undefined;
     let matcherHtlcTimelock: bigint | undefined;
 
-    console.log(`[fetchSwapOnChainData] Step 3 - Checking matcher HTLC for order ${meta.orderId}:`, {
-      hasMatcherHtlcSwapId: !!meta.matcherHtlcSwapId,
-      hasMatcher: !!meta.matcher,
-      hasCreator: !!meta.creator,
-      hasHashlock: !!meta.hashlock,
-      hashlock: meta.hashlock,
-      matcher: meta.matcher,
-      creator: meta.creator,
-    });
-
-    if (!meta.matcherHtlcSwapId && meta.matcher && meta.creator && meta.hashlock) {
-      console.log(`[fetchSwapOnChainData] Attempting to discover matcher HTLC on chain ${meta.targetChainId}`);
-      // Scan on-chain: matcher created an HTLC on target chain with creator as participant, same hashlock
-      const found = await discoverHTLCSwap(
-        targetClient, meta.targetChainId,
-        meta.matcher, meta.creator,
-        meta.hashlock // MUST match hashlock
-      );
-      if (found) {
-        console.log(`[fetchSwapOnChainData] ✅ Found matcher HTLC:`, found);
-        updates.matcherHtlcSwapId = found.swapId;
-        meta = { ...meta, matcherHtlcSwapId: found.swapId };
-        matcherHtlcStatus = found.status;
-        matcherHtlcTimelock = found.timelock;
-      } else {
-        console.warn(`[fetchSwapOnChainData] ⚠️ Matcher HTLC not found on chain ${meta.targetChainId}`);
+    if (targetClient) {
+      if (!meta.matcherHtlcSwapId && meta.matcher && meta.creator && meta.hashlock) {
+        // Scan on-chain: matcher created an HTLC on target chain with creator as participant, same hashlock
+        const found = await discoverHTLCSwap(
+          targetClient, meta.targetChainId as number,
+          meta.matcher, meta.creator,
+          meta.hashlock // MUST match hashlock
+        );
+        if (found) {
+          updates.matcherHtlcSwapId = found.swapId;
+          meta = { ...meta, matcherHtlcSwapId: found.swapId };
+          matcherHtlcStatus = found.status;
+          matcherHtlcTimelock = found.timelock;
+        }
       }
-    } else {
-      console.log(`[fetchSwapOnChainData] Skipping matcher HTLC discovery - condition not met`);
-    }
 
-    // Fetch matcher HTLC status if we have the swap ID (and didn't already fetch via discovery)
-    if (meta.matcherHtlcSwapId && !matcherHtlcStatus) {
-      try {
-        const htlcAddress = getContractAddress(meta.targetChainId, 'htlc') as `0x${string}`;
-        const swapData = await targetClient.readContract({
-          address: htlcAddress,
-          abi: HTLC_ABI,
-          functionName: 'getSwap',
-          args: [meta.matcherHtlcSwapId as `0x${string}`],
-        }) as any;
-        matcherHtlcStatus = HTLC_STATUS_MAP[swapData.status] || 'Empty';
-        matcherHtlcTimelock = swapData.timelock;
-      } catch {
-        // HTLC might not exist
+      // Fetch matcher HTLC status if we have the swap ID (and didn't already fetch via discovery)
+      if (meta.matcherHtlcSwapId && !matcherHtlcStatus) {
+        try {
+          const htlcAddress = getContractAddress(meta.targetChainId, 'htlc') as `0x${string}`;
+          const swapData = await targetClient.readContract({
+            address: htlcAddress,
+            abi: HTLC_ABI,
+            functionName: 'getSwap',
+            args: [meta.matcherHtlcSwapId as `0x${string}`],
+          }) as any;
+          matcherHtlcStatus = HTLC_STATUS_MAP[swapData.status] || 'Empty';
+          matcherHtlcTimelock = swapData.timelock;
+        } catch {
+          // HTLC might not exist
+        }
       }
     }
 
@@ -397,8 +386,6 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
       matcherHtlcTimelock,
     });
 
-    console.log(`[fetchSwapOnChainData] Order ${meta.orderId} result: phase=${phase}, orderStatus=${orderStatus}, expiresAt=${expiresAt}`);
-
     return {
       meta,
       phase,
@@ -411,24 +398,24 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
     };
   } catch (err) {
     console.error(`[fetchSwapOnChainData] Critical error for order ${meta.orderId}:`, err);
-    // Fallback: Try to fetch just the order status (minimal RPC call)
+    // Fallback: Try to fetch just the order status (minimal RPC call, EVM only)
     let fallbackStatus: string | undefined;
     let fallbackExpiresAt: bigint | undefined;
-    try {
-      const sourceClient = getPublicClient(meta.sourceChainId);
-      const ccobAddress = getContractAddress(meta.sourceChainId, 'crossChainOrderBook') as `0x${string}`;
-      const orderData = await sourceClient.readContract({
-        address: ccobAddress,
-        abi: CROSS_CHAIN_ORDER_BOOK_ABI,
-        functionName: 'getOrder',
-        args: [BigInt(meta.orderId)],
-      }) as any;
-      fallbackStatus = ORDER_STATUS_MAP[orderData.status] || 'Active';
-      fallbackExpiresAt = orderData.expiresAt as bigint;
-      console.log(`[fetchSwapOnChainData] Fallback fetch successful: order ${meta.orderId} status=${fallbackStatus}, expiresAt=${fallbackExpiresAt}`);
-    } catch {
-      console.warn(`[fetchSwapOnChainData] Fallback fetch also failed for order ${meta.orderId}, marking as Active`);
-      fallbackStatus = 'Active'; // Assume active if we can't fetch
+    if (typeof meta.sourceChainId === 'number') {
+      try {
+        const sourceClient = getPublicClient(meta.sourceChainId);
+        const ccobAddress = getContractAddress(meta.sourceChainId, 'crossChainOrderBook') as `0x${string}`;
+        const orderData = await sourceClient.readContract({
+          address: ccobAddress,
+          abi: CROSS_CHAIN_ORDER_BOOK_ABI,
+          functionName: 'getOrder',
+          args: [BigInt(meta.orderId)],
+        }) as any;
+        fallbackStatus = ORDER_STATUS_MAP[orderData.status] || 'Active';
+        fallbackExpiresAt = orderData.expiresAt as bigint;
+      } catch {
+        fallbackStatus = 'Active'; // Assume active if we can't fetch
+      }
     }
 
     return {
@@ -470,7 +457,6 @@ export function useActiveSwaps() {
 
       if (shouldScan) {
         try {
-          console.log(`[useActiveSwaps] Running blockchain scan for ${address}...`);
           await scanBlockchainForSwaps(address);
           lastScanTime.current = now;
           forceNextScan.current = false;
@@ -480,7 +466,6 @@ export function useActiveSwaps() {
       }
 
       const stored = getSwaps(address);
-      console.log(`[useActiveSwaps] localStorage has ${stored.length} swaps for ${address.slice(0, 8)}...`);
 
       if (stored.length === 0) {
         setSwaps([]);
@@ -519,24 +504,11 @@ export function useActiveSwaps() {
 
   const activeSwaps = useMemo(
     () => {
-      console.log('[useActiveSwaps] Filtering swaps, total:', swaps.length);
       const filtered = swaps.filter((s) => {
-        // Exclude completed/refunded phases
-        if (['completed', 'refunded'].includes(s.phase)) {
-          console.log(`  → Excluding swap ${s.meta.orderId}: phase=${s.phase}`);
-          return false;
-        }
-
-        // Exclude cancelled, expired, or completed orders at the blockchain level
-        if (s.orderStatus && ['Cancelled', 'Expired', 'Completed'].includes(s.orderStatus)) {
-          console.log(`  → Excluding swap ${s.meta.orderId}: orderStatus=${s.orderStatus}`);
-          return false;
-        }
-
-        console.log(`  ✓ Including swap ${s.meta.orderId}: phase=${s.phase}, orderStatus=${s.orderStatus || 'undefined'}`);
+        if (['completed', 'refunded'].includes(s.phase)) return false;
+        if (s.orderStatus && ['Cancelled', 'Expired', 'Completed'].includes(s.orderStatus)) return false;
         return true;
       });
-      console.log('[useActiveSwaps] Active swaps after filter:', filtered.length);
       return filtered;
     },
     [swaps]

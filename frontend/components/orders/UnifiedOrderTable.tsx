@@ -115,10 +115,12 @@ export function UnifiedOrderTable({
     const isSameChain = order.sourceChainIdNum === order.targetChainIdNum;
     const orderSourceChainId = order.sourceChainIdNum;
 
-    // Check if need to switch chain
+    // Check if need to switch chain (EVM only — SUI chain switching handled by SUI wallet)
     if (chainId !== orderSourceChainId) {
       toast.error(`Please switch to ${getChainConfig(orderSourceChainId)?.shortName} network first`);
-      switchChain?.({ chainId: orderSourceChainId });
+      if (typeof orderSourceChainId === 'number') {
+        switchChain?.({ chainId: orderSourceChainId });
+      }
       return;
     }
 

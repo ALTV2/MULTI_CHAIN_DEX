@@ -97,14 +97,12 @@ export function determineSwapPhase(params: {
 
   // Only matcher's HTLC exists (or creator refunded already)
   if (matcherHtlcStatus === 'Active' && (!creatorHtlcStatus || creatorHtlcStatus === 'Empty' || creatorHtlcStatus === 'Refunded')) {
-    // Matcher is waiting for creator, but creator may have refunded
-    // Check if matcher's timelock expired
-    const matcherTimelock = matcherHtlcTimelock;
-    if (matcherTimelock && now >= matcherTimelock) {
+    // Check if matcher's timelock expired — then matcher can refund
+    if (matcherHtlcTimelock && now >= matcherHtlcTimelock) {
       return 'refundable';
     }
-    // Still waiting or can refund
-    return 'refundable';
+    // Timelock still valid: creator hasn't locked yet (or refunded), matcher is waiting
+    return 'creator_htlc_created';
   }
 
   // If counterparty refunded but user's HTLC is still active
@@ -187,7 +185,7 @@ export function getPhaseStepIndex(phase: SwapPhase): number {
   }
 }
 
-export function getRequiredChain(phase: SwapPhase, role: string, meta: StoredSwapMeta): number | null {
+export function getRequiredChain(phase: SwapPhase, role: string, meta: StoredSwapMeta): number | string | null {
   switch (phase) {
     case 'order_matched':
       // Creator locks on source chain

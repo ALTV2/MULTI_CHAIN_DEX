@@ -38,7 +38,7 @@ export function TargetWalletSelector({
   // Get chain info - use chainConfig for SUI, chainRegistry for EVM
   const adapter = !isSuiChain ? chainRegistry.getAdapter(targetChainId as number) : null;
   const chainInfo = isSuiChain
-    ? chainConfig[targetChainId as string]
+    ? chainConfig[targetChainId as keyof typeof chainConfig]
     : adapter?.getChainInfo();
 
   const { data: savedWallets } = useQuery({

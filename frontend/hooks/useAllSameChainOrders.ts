@@ -14,7 +14,9 @@ import type { UnifiedOrder } from './useAllUnifiedOrders';
 export function useAllSameChainOrders(params?: {}) {
   const allChainIds = getSupportedChainIds();
   // Filter for EVM chains only (same-chain orders are EVM-only)
-  const chainIds = allChainIds.filter((id) => typeof id === 'number') as number[];
+  const chainIds = allChainIds
+    .filter((id) => !String(id).startsWith('sui:'))
+    .map((id) => Number(id));
 
   // Fetch orders from all chains
   const allChainResults = chainIds.map((chainId) => ({

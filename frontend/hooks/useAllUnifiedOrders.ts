@@ -21,7 +21,9 @@ export interface UnifiedOrder extends CrossChainOrder {
 export function useAllUnifiedOrders(params?: {}) {
   const allChainIds = getSupportedChainIds();
   // Filter for EVM chains only (cross-chain orders use EVM contracts)
-  const chainIds = allChainIds.filter((id) => typeof id === 'number') as number[];
+  const chainIds = allChainIds
+    .filter((id) => !String(id).startsWith('sui:'))
+    .map((id) => Number(id));
 
   // Fetch orders from all chain pairs
   const allChainResults = chainIds.flatMap((sourceChainId) =>

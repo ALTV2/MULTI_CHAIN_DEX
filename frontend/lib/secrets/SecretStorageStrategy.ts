@@ -4,6 +4,6 @@ export interface SecretStorageStrategy {
   deleteSecret(swapKey: string): Promise<void>;
 }
 
-export function buildSwapKey(walletAddress: string, orderId: string, chainId: number): string {
+export function buildSwapKey(walletAddress: string, orderId: string, chainId: number | string): string {
   return `${walletAddress.toLowerCase()}_${orderId}_${chainId}`;
 }

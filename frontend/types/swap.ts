@@ -29,6 +29,10 @@ export interface StoredSwapMeta {
   creator: string;           // Order creator address
   matcher?: string;          // Matcher address (set after match)
 
+  // Cross-chain address fields (for SUI u2194 EVM swaps)
+  creatorEvmAddress?: string;  // Creator's EVM address (set by matcher when matching SUI orders)
+  targetAddress?: string;      // Matcher's cross-chain address for receiving funds
+
   // HTLC swap IDs (set as HTLCs are created)
   creatorHtlcSwapId?: string;  // HTLC on source chain (creator locks sell tokens)
   matcherHtlcSwapId?: string;  // HTLC on target chain (matcher locks buy tokens)

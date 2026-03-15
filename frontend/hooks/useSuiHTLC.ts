@@ -7,7 +7,7 @@
  * Uses @mysten/dapp-kit for wallet integration and transactions
  */
 
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import {
   useSignAndExecuteTransaction,
   useSuiClient,
@@ -269,9 +269,67 @@ export function useSuiSwap(swapObjectId: string | undefined) {
   };
 }
 
+// How many pages of events to look back when searching for a revealed secret.
+// Each page has up to 50 events. 20 pages × 50 = 1000 events lookback.
+const SUI_SECRET_SEARCH_PAGES = 20;
+const SUI_SECRET_POLL_INTERVAL_MS = 5_000;
+
+interface SwapWithdrawnEvent {
+  swap_id: number[];
+  swap_object_id: string;
+  secret: number[];
+  participant: string;
+}
+
 /**
- * Hook for watching SUI events for secret reveals
- * Polls for SwapWithdrawn events and extracts the secret
+ * Search paginated SwapWithdrawn events for a secret matching the given swapId.
+ * Uses cursor-based pagination so old events are not missed.
+ */
+async function findSecretInSuiEvents(
+  client: ReturnType<typeof useSuiClient>,
+  packageId: string,
+  swapId: `0x${string}`
+): Promise<`0x${string}` | null> {
+  const targetBytes = Array.from(hexToBytes(swapId));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let cursor: any = undefined;
+
+  for (let page = 0; page < SUI_SECRET_SEARCH_PAGES; page++) {
+    const result = await client.queryEvents({
+      query: { MoveEventType: `${packageId}::htlc::SwapWithdrawn` },
+      order: 'descending',
+      limit: 50,
+      cursor,
+    });
+
+    for (const event of result.data) {
+      if (!event.parsedJson || typeof event.parsedJson !== 'object') continue;
+      const parsed = event.parsedJson as Partial<SwapWithdrawnEvent>;
+      const eventBytes = parsed.swap_id;
+      if (
+        eventBytes &&
+        eventBytes.length === targetBytes.length &&
+        eventBytes.every((b, i) => b === targetBytes[i])
+      ) {
+        const secretBytes = parsed.secret;
+        if (secretBytes) {
+          return `0x${secretBytes.map((b) => b.toString(16).padStart(2, '0')).join('')}` as `0x${string}`;
+        }
+      }
+    }
+
+    // Stop if no more pages
+    if (!result.hasNextPage || !result.nextCursor) break;
+    cursor = result.nextCursor;
+  }
+
+  return null;
+}
+
+/**
+ * Hook for watching SUI events for secret reveals.
+ * Polls paginated SwapWithdrawn events until the secret is found.
+ * Used by the matcher (EVM side) after Alice withdraws on SUI.
  */
 export function useSuiSecretWatcher(
   swapId: `0x${string}` | undefined,
@@ -279,74 +337,48 @@ export function useSuiSecretWatcher(
 ) {
   const client = useSuiClient();
   const [isWatching, setIsWatching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const isSearching = useRef(false);
 
   useEffect(() => {
     if (!swapId) return;
 
     setIsWatching(true);
+    setError(null);
     let isMounted = true;
 
     const pollForSecret = async () => {
+      if (isSearching.current) return;
+      isSearching.current = true;
+
       try {
-        // Query events for SwapWithdrawn
-        const events = await client.queryEvents({
-          query: {
-            MoveEventType: `${PACKAGE_ID}::htlc::SwapWithdrawn`,
-          },
-          order: 'descending',
-          limit: 50,
-        });
+        const secret = await findSecretInSuiEvents(client, PACKAGE_ID, swapId);
 
         if (!isMounted) return;
 
-        // Find event matching our swapId
-        for (const event of events.data) {
-          if (event.parsedJson && typeof event.parsedJson === 'object') {
-            const parsedEvent = event.parsedJson as {
-              swap_id?: number[];
-              secret?: number[];
-            };
-
-            // Compare swap IDs (both are byte arrays)
-            const eventSwapIdBytes = parsedEvent.swap_id;
-            const targetSwapIdBytes = Array.from(hexToBytes(swapId));
-
-            if (
-              eventSwapIdBytes &&
-              eventSwapIdBytes.length === targetSwapIdBytes.length &&
-              eventSwapIdBytes.every((byte, i) => byte === targetSwapIdBytes[i])
-            ) {
-              // Found matching event - extract secret
-              const secretBytes = parsedEvent.secret;
-              if (secretBytes) {
-                const secretHex = `0x${secretBytes
-                  .map((b) => b.toString(16).padStart(2, '0'))
-                  .join('')}` as `0x${string}`;
-
-                if (isMounted) {
-                  setIsWatching(false);
-                  onSecretRevealed(secretHex);
-                }
-                return;
-              }
-            }
-          }
+        if (secret) {
+          setIsWatching(false);
+          onSecretRevealed(secret);
         }
       } catch (err) {
-        console.error('Error polling for secret:', err);
+        if (isMounted) {
+          setError(err instanceof Error ? err.message : 'Failed to poll SUI events');
+        }
+      } finally {
+        isSearching.current = false;
       }
     };
 
-    // Poll every 3 seconds
-    const interval = setInterval(pollForSecret, 3000);
-    pollForSecret(); // Initial check
+    pollForSecret();
+    const interval = setInterval(pollForSecret, SUI_SECRET_POLL_INTERVAL_MS);
 
     return () => {
       isMounted = false;
       clearInterval(interval);
       setIsWatching(false);
+      isSearching.current = false;
     };
   }, [client, swapId, onSecretRevealed]);
 
-  return { isWatching };
+  return { isWatching, error };
 }

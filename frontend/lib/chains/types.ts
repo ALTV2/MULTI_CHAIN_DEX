@@ -1,4 +1,4 @@
-export type ChainFamily = 'evm' | 'solana' | 'ton';
+export type ChainFamily = 'evm' | 'sui' | 'solana' | 'ton';
 
 export interface ChainInfo {
   id: string;

@@ -16,9 +16,7 @@ import { updateSwap } from '@/lib/utils/swapStorage';
 import { getRequiredChain } from '@/lib/utils/swapPhase';
 import { getContractAddress, chainConfig, SupportedChainId, getExplorerTxUrl } from '@/lib/contracts/addresses';
 import { isNativeToken } from '@/lib/constants/tokens';
-import { getSecretStrategy } from '@/lib/secrets';
-import { useSettingsStore } from '@/stores/useSettingsStore';
-import { buildSwapKey } from '@/lib/secrets/SecretStorageStrategy';
+import { useMemo } from 'react';
 import { orderBookABI } from '@/lib/contracts/abis/OrderBook';
 import { CROSS_CHAIN_ORDER_BOOK_ABI } from '@/lib/contracts/abis/CrossChainOrderBook';
 import type { ActiveSwap } from '@/types/swap';
@@ -193,7 +191,6 @@ function OrderCreatedAction({ swap, onUpdate, detectedHTLC }: { swap: ActiveSwap
 
   useEffect(() => {
     if (isSuccess && cancelTxHash && onUpdate) {
-      console.log('✅ Order cancelled successfully, refreshing...');
       toast.success('Order cancelled successfully!');
       setCancelTxHash(undefined);
       onUpdate();
@@ -208,13 +205,6 @@ function OrderCreatedAction({ swap, onUpdate, detectedHTLC }: { swap: ActiveSwap
 
   const handleCancel = async () => {
     setError(null);
-    console.log('🗑️ Attempting to cancel order:', {
-      orderId: swap.meta.orderId,
-      isSameChain,
-      currentChainId: evmChainId,
-      orderChainId,
-      needsSwitch: needsChainSwitch
-    });
 
     try {
       // For SUI orders, use SUI cancellation logic
@@ -226,10 +216,7 @@ function OrderCreatedAction({ swap, onUpdate, detectedHTLC }: { swap: ActiveSwap
           return;
         }
 
-        // Extract numeric order ID from "sui-X" format
         const numericOrderId = swap.meta.orderId.replace('sui-', '');
-        console.log('🗑️ Cancelling SUI order:', numericOrderId);
-
         await cancelSuiOrder(numericOrderId);
         toast.success('SUI order cancelled successfully!');
 
@@ -246,14 +233,8 @@ function OrderCreatedAction({ swap, onUpdate, detectedHTLC }: { swap: ActiveSwap
 
       const abi = isSameChain ? orderBookABI : CROSS_CHAIN_ORDER_BOOK_ABI;
 
-      console.log('📝 Contract details:', {
-        address: contractAddress,
-        contractType: isSameChain ? 'OrderBook' : 'CrossChainOrderBook',
-        chainId: orderChainId,
-      });
-
-      // ⚠️ DEBUG: Check order status before cancellation
-      const client = getPublicClient(orderChainId);
+      // Check order status before cancellation
+      const client = getPublicClient(orderChainId as number);
       const orderData = await client.readContract({
         address: contractAddress,
         abi,
@@ -264,18 +245,8 @@ function OrderCreatedAction({ swap, onUpdate, detectedHTLC }: { swap: ActiveSwap
       const statusMap = ['Active', 'Matched', 'Completed', 'Cancelled', 'Expired'];
       const currentStatus = statusMap[orderData.status] || `Unknown(${orderData.status})`;
 
-      console.log('🔍 Current order status:', {
-        orderId: swap.meta.orderId,
-        status: currentStatus,
-        statusCode: orderData.status,
-        creator: orderData.creator,
-        yourAddress: address,
-        isCreator: orderData.creator?.toLowerCase() === address?.toLowerCase(),
-      });
-
       if (orderData.status !== 0) { // 0 = Active
         const msg = `Cannot cancel: Order is ${currentStatus}`;
-        console.error('❌', msg);
         toast.error(msg);
         setError(msg);
         return;
@@ -283,7 +254,6 @@ function OrderCreatedAction({ swap, onUpdate, detectedHTLC }: { swap: ActiveSwap
 
       if (orderData.creator?.toLowerCase() !== address?.toLowerCase()) {
         const msg = 'You are not the creator of this order';
-        console.error('❌', msg);
         toast.error(msg);
         setError(msg);
         return;
@@ -309,11 +279,7 @@ function OrderCreatedAction({ swap, onUpdate, detectedHTLC }: { swap: ActiveSwap
         ...gasConfig,
       });
 
-      console.log('✅ Cancel transaction submitted:', hash);
-
-      // Get explorer URL
       const explorerUrl = getExplorerTxUrl(orderChainId, hash);
-      console.log('🔗 Transaction URL:', explorerUrl);
 
       setCancelTxHash(hash);
 
@@ -335,9 +301,8 @@ function OrderCreatedAction({ swap, onUpdate, detectedHTLC }: { swap: ActiveSwap
       );
 
     } catch (err: any) {
-      console.error('❌ Cancel failed:', err);
+      console.error('Cancel failed:', err);
       const errorMsg = err?.shortMessage || err?.message || 'Failed to cancel order';
-      console.error('Error details:', errorMsg);
       setError(errorMsg);
       toast.error(errorMsg);
     }
@@ -426,13 +391,18 @@ function OrderCreatedAction({ swap, onUpdate, detectedHTLC }: { swap: ActiveSwap
  */
 function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () => void }) {
   const { address } = useAccount();
-  const chainId = useChainId();
   const { meta, phase } = swap;
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<'idle' | 'approving' | 'locking' | 'done'>('idle');
+  const [secretSaved, setSecretSaved] = useState(false);
   const [reactivateTxHash, setReactivateTxHash] = useState<`0x${string}` | undefined>();
 
-  const sourceChainId = meta.sourceChainId;
+  // Generate secret once for this component instance — never persisted to any storage
+  const [sessionSecret] = useState<`0x${string}`>(() => generateSecret());
+  const sessionHashlock = useMemo(() => generateHashlock(sessionSecret), [sessionSecret]);
+
+  // CreatorLockAction is only rendered for EVM source chains
+  const sourceChainId = meta.sourceChainId as number;
   const htlcAddress = getContractAddress(sourceChainId, 'htlc') as `0x${string}`;
   const sellAmount = BigInt(meta.sellAmount);
   const sellToken = meta.sellToken as `0x${string}`;
@@ -461,7 +431,6 @@ function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
 
   useEffect(() => {
     if (isReactivateSuccess && reactivateTxHash && onUpdate) {
-      console.log('✅ Order reactivated successfully');
       toast.success('Match cancelled! Your order is back in the order book.');
       setReactivateTxHash(undefined);
       onUpdate();
@@ -470,11 +439,6 @@ function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
 
   const handleCancelMatch = async () => {
     setError(null);
-    console.log('🔄 Attempting to cancel match and reactivate order:', {
-      orderId: meta.orderId,
-      currentChainId: chainId,
-      orderChainId: sourceChainId,
-    });
 
     try {
       const contractAddress = getContractAddress(sourceChainId, 'crossChainOrderBook') as `0x${string}`;
@@ -489,15 +453,8 @@ function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
       const statusMap = ['Active', 'Matched', 'Completed', 'Cancelled', 'Expired'];
       const currentStatus = statusMap[orderData.status] || `Unknown(${orderData.status})`;
 
-      console.log('🔍 Current order status:', {
-        orderId: meta.orderId,
-        status: currentStatus,
-        statusCode: orderData.status,
-      });
-
       if (orderData.status !== 1) {
         const msg = `Cannot reactivate: Order is ${currentStatus}, not Matched`;
-        console.error('❌', msg);
         toast.error(msg);
         setError(msg);
         return;
@@ -505,7 +462,6 @@ function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
 
       if (orderData.creator?.toLowerCase() !== address?.toLowerCase()) {
         const msg = 'You are not the creator of this order';
-        console.error('❌', msg);
         toast.error(msg);
         setError(msg);
         return;
@@ -515,7 +471,6 @@ function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
       const now = Math.floor(Date.now() / 1000);
       if (now >= expiresAt) {
         const msg = 'Order has expired and cannot be reactivated';
-        console.error('❌', msg);
         toast.error(msg);
         setError(msg);
         return;
@@ -523,14 +478,8 @@ function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
 
       const isPolygon = sourceChainId === 80002;
       const gasConfig = isPolygon
-        ? {
-            gas: 300000n,
-            maxFeePerGas: 50000000000n,
-            maxPriorityFeePerGas: 50000000000n,
-          }
-        : {
-            gas: 300000n,
-          };
+        ? { gas: 300000n, maxFeePerGas: 50000000000n, maxPriorityFeePerGas: 50000000000n }
+        : { gas: 300000n };
 
       const hash = await writeContractAsync({
         address: contractAddress,
@@ -540,23 +489,17 @@ function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
         ...gasConfig,
       });
 
-      console.log('✅ Reactivate transaction submitted:', hash);
-      const explorerUrl = getExplorerTxUrl(sourceChainId, hash);
       setReactivateTxHash(hash);
-
       toast.info(
         <div>
-          Transaction submitted!
-          <br />
-          <a href={explorerUrl} target="_blank" rel="noopener noreferrer" className="text-blue-500 underline text-xs mt-1 inline-block">
-            View on explorer →
-          </a>
+          Transaction submitted!<br />
+          <a href={getExplorerTxUrl(sourceChainId, hash)} target="_blank" rel="noopener noreferrer"
+            className="text-blue-500 underline text-xs mt-1 inline-block">View on explorer →</a>
         </div>,
         { duration: 10000 }
       );
-
     } catch (err: any) {
-      console.error('❌ Cancel match failed:', err);
+      console.error('Cancel match failed:', err);
       const errorMsg = err?.shortMessage || err?.message || 'Failed to cancel match';
       setError(errorMsg);
       toast.error(errorMsg);
@@ -564,7 +507,7 @@ function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
   };
 
   const handleLock = async () => {
-    if (!address) return;
+    if (!address || !secretSaved) return;
 
     if (!meta.matcher) {
       setError('Matcher address not yet synced. Click Refresh and try again.');
@@ -575,18 +518,8 @@ function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
     setError(null);
 
     try {
-      let secret = meta.secret as `0x${string}` | undefined;
-      let hashlock = meta.hashlock as `0x${string}`;
-
-      if (!secret) {
-        secret = generateSecret();
-        hashlock = generateHashlock(secret);
-        updateSwap(address, meta.orderId, { secret, hashlock }, meta.sourceChainId);
-
-        const strategy = getSecretStrategy(useSettingsStore.getState().secretStorage);
-        const swapKey = buildSwapKey(address, meta.orderId, meta.sourceChainId);
-        await strategy.saveSecret(swapKey, secret);
-      }
+      // Save only the hashlock (public) — secret is never stored anywhere
+      updateSwap(address, meta.orderId, { hashlock: sessionHashlock }, meta.sourceChainId);
 
       if (needsApproval && !isApproved) {
         setStep('approving');
@@ -598,7 +531,7 @@ function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
       const swapId = generateSwapId(
         address,
         meta.matcher as `0x${string}`,
-        hashlock,
+        sessionHashlock,
         timelock,
         sourceChainId
       );
@@ -608,7 +541,7 @@ function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
       await createSwap({
         swapId,
         participant: meta.matcher as `0x${string}`,
-        hashlock,
+        hashlock: sessionHashlock,
         timelock,
         token: sellToken,
         amount: sellAmount,
@@ -624,30 +557,50 @@ function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
     return (
       <div className="space-y-2">
         <p className="text-sm text-yellow-400">Syncing matcher info from blockchain...</p>
-        <Button size="sm" variant="secondary" onClick={onUpdate}>
-          Refresh
-        </Button>
+        <Button size="sm" variant="secondary" onClick={onUpdate}>Refresh</Button>
       </div>
     );
   }
 
   return (
     <div className="space-y-3">
-      {/* Show matched info for order_matched phase */}
       {phase === 'order_matched' && (
-        <>
-          <div className="text-sm text-gray-400">
-            Your order has been matched! You can proceed to lock your tokens or cancel the match to return the order to the order book.
-          </div>
-          <div className="text-xs text-gray-500">
-            Matched by: <span className="font-mono">{meta.matcher.slice(0, 6)}...{meta.matcher.slice(-4)}</span>
-          </div>
-        </>
+        <div className="text-xs text-gray-500">
+          Matched by: <span className="font-mono">{meta.matcher.slice(0, 6)}...{meta.matcher.slice(-4)}</span>
+        </div>
       )}
 
-      {error && (
-        <div className="p-2 rounded bg-red-500/10 text-red-400 text-xs">{error}</div>
+      {/* Secret — shown once, never stored */}
+      {step !== 'done' && !isSuccess && (
+        <div className="p-3 rounded-xl border border-yellow-500/40 bg-yellow-500/10 space-y-2">
+          <p className="text-xs font-semibold text-yellow-400">⚠️ Save your secret — it will not be stored anywhere!</p>
+          <p className="text-xs text-gray-400">You will need to enter it manually when claiming your tokens.</p>
+          <div className="flex items-center gap-2">
+            <p className="text-xs font-mono break-all text-gray-200 flex-1 select-all">{sessionSecret}</p>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                navigator.clipboard.writeText(sessionSecret);
+                toast.success('Secret copied!');
+              }}
+            >
+              Copy
+            </Button>
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={secretSaved}
+              onChange={(e) => setSecretSaved(e.target.checked)}
+              className="w-4 h-4 accent-yellow-400"
+            />
+            <span className="text-xs text-gray-300">I have saved my secret in a safe place</span>
+          </label>
+        </div>
       )}
+
+      {error && <div className="p-2 rounded bg-red-500/10 text-red-400 text-xs">{error}</div>}
 
       {step === 'done' || isSuccess ? (
         <div className="p-2 rounded bg-green-500/10 text-green-400 text-xs">
@@ -655,7 +608,6 @@ function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
         </div>
       ) : (
         <div className="flex gap-2">
-          {/* Show Cancel Match button only for order_matched phase */}
           {phase === 'order_matched' && (
             <Button
               size="sm"
@@ -673,14 +625,11 @@ function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
             variant="primary"
             loading={isApproving || isCreating || isConfirming}
             onClick={handleLock}
-            disabled={isApproving || isCreating || isConfirming || isReactivating || isReactivateConfirming}
+            disabled={!secretSaved || isApproving || isCreating || isConfirming || isReactivating || isReactivateConfirming}
           >
-            {isApproving
-              ? 'Approving...'
-              : isCreating || isConfirming
-              ? 'Locking Tokens...'
-              : needsApproval
-              ? 'Approve & Lock Tokens'
+            {isApproving ? 'Approving...'
+              : isCreating || isConfirming ? 'Locking Tokens...'
+              : needsApproval ? 'Approve & Lock Tokens'
               : 'Lock Tokens in HTLC'}
           </Button>
         </div>
@@ -698,7 +647,8 @@ function MatcherLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<'idle' | 'approving' | 'locking' | 'done'>('idle');
 
-  const targetChainId = meta.targetChainId;
+  // MatcherLockAction is only rendered for EVM target chains
+  const targetChainId = meta.targetChainId as number;
   const htlcAddress = getContractAddress(targetChainId, 'htlc') as `0x${string}`;
   const buyAmount = BigInt(meta.buyAmount);
   const buyToken = meta.buyToken as `0x${string}`;
@@ -723,34 +673,19 @@ function MatcherLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
     if (!address) return;
     setError(null);
 
-    console.log('🔒 [MatcherLockAction] Starting lock process:', {
-      orderId: meta.orderId,
-      role: meta.role,
-      hashlock: meta.hashlock,
-      targetChainId,
-      buyToken,
-      buyAmount: buyAmount.toString(),
-    });
-
     try {
       // Use the same hashlock from the creator's HTLC (synced from on-chain by useActiveSwaps)
       if (!meta.hashlock || meta.hashlock === '' || meta.hashlock === '0x') {
-        console.error('❌ [MatcherLockAction] Hashlock not available:', meta.hashlock);
         setError('Hashlock not yet synced from creator\'s HTLC. Click Refresh and try again.');
         onUpdate();
         return;
       }
       const hashlock = meta.hashlock as `0x${string}`;
-      console.log('✅ [MatcherLockAction] Hashlock validated:', hashlock);
 
       // Step 1: Approve if needed
       if (needsApproval && !isApproved) {
-        console.log('🔐 [MatcherLockAction] Approval needed, requesting approval...');
         setStep('approving');
         await approve();
-        console.log('✅ [MatcherLockAction] Approval completed');
-      } else {
-        console.log('✅ [MatcherLockAction] No approval needed or already approved');
       }
 
       // Step 2: Create HTLC with 24h timelock (shorter than creator's 48h)
@@ -764,20 +699,9 @@ function MatcherLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
         targetChainId
       );
 
-      console.log('📝 [MatcherLockAction] Generated swap details:', {
-        swapId,
-        participant: meta.creator,
-        hashlock,
-        timelock: timelock.toString(),
-        token: buyToken,
-        amount: buyAmount.toString(),
-      });
-
       // Save matcherHtlcSwapId before tx
       updateSwap(address, meta.orderId, { matcherHtlcSwapId: swapId }, meta.sourceChainId);
-      console.log('💾 [MatcherLockAction] Saved matcherHtlcSwapId to localStorage');
 
-      console.log('🚀 [MatcherLockAction] Creating HTLC swap...');
       await createSwap({
         swapId,
         participant: meta.creator as `0x${string}`,
@@ -786,15 +710,8 @@ function MatcherLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
         token: buyToken,
         amount: buyAmount,
       });
-      console.log('✅ [MatcherLockAction] HTLC created successfully!');
     } catch (err: any) {
-      console.error('❌ [MatcherLockAction] Lock failed:', err);
-      console.error('Error details:', {
-        message: err?.message,
-        shortMessage: err?.shortMessage,
-        code: err?.code,
-        data: err?.data,
-      });
+      console.error('MatcherLockAction failed:', err);
       setError(err?.shortMessage || err?.message || 'Failed to lock tokens');
       setStep('idle');
     }
@@ -831,14 +748,17 @@ function MatcherLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
 }
 
 /**
- * Creator withdraws from matcher's HTLC (reveals secret)
+ * Creator withdraws from matcher's HTLC (reveals secret).
+ * Secret is never stored — user must enter it manually.
  */
 function CreatorWithdrawAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () => void }) {
   const { address } = useAccount();
   const { meta } = swap;
   const [error, setError] = useState<string | null>(null);
+  const [inputSecret, setInputSecret] = useState('');
 
-  const targetChainId = meta.targetChainId;
+  // CreatorWithdrawAction: creator withdraws from matcher's EVM HTLC on target chain
+  const targetChainId = meta.targetChainId as number;
   const { withdraw, isPending, isConfirming, isSuccess } = useWithdrawHTLC(targetChainId);
 
   useEffect(() => {
@@ -847,15 +767,16 @@ function CreatorWithdrawAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate:
     }
   }, [isSuccess, onUpdate]);
 
+  const isValidSecret = /^0x[a-fA-F0-9]{64}$/.test(inputSecret);
+
   const handleWithdraw = async () => {
-    const secret = meta.secret || recoveredSecret;
-    if (!address || !secret || !meta.matcherHtlcSwapId) return;
+    if (!address || !isValidSecret || !meta.matcherHtlcSwapId) return;
     setError(null);
 
     try {
       await withdraw(
         meta.matcherHtlcSwapId as `0x${string}`,
-        secret as `0x${string}`
+        inputSecret as `0x${string}`
       );
     } catch (err: any) {
       console.error('Creator withdraw failed:', err);
@@ -863,41 +784,31 @@ function CreatorWithdrawAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate:
     }
   };
 
-  // Try to recover secret from strategy if not in swap meta
-  const [recoveredSecret, setRecoveredSecret] = useState<string | null>(null);
-  const [isRecovering, setIsRecovering] = useState(false);
-
-  useEffect(() => {
-    if (!meta.secret && address && !recoveredSecret && !isRecovering) {
-      setIsRecovering(true);
-      const strategy = getSecretStrategy(useSettingsStore.getState().secretStorage);
-      const swapKey = buildSwapKey(address, meta.orderId, meta.sourceChainId);
-      strategy.getSecret(swapKey).then((s) => {
-        if (s) setRecoveredSecret(s);
-        setIsRecovering(false);
-      }).catch(() => setIsRecovering(false));
-    }
-  }, [meta.secret, address, meta.orderId, meta.sourceChainId, recoveredSecret, isRecovering]);
-
-  const effectiveSecret = meta.secret || recoveredSecret;
-
-  if (isRecovering) {
-    return <WaitingMessage text="Looking up saved secret..." />;
-  }
-
-  if (!effectiveSecret) {
-    return (
-      <div className="p-2 rounded bg-red-500/10 text-red-400 text-xs">
-        Secret not found. Check your secret storage settings in Profile.
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-3">
-      {error && (
-        <div className="p-2 rounded bg-red-500/10 text-red-400 text-xs">{error}</div>
-      )}
+      <div className="p-3 rounded-xl border border-blue-500/30 bg-blue-500/10 space-y-2">
+        <p className="text-xs font-semibold text-blue-300">Enter your secret to claim tokens</p>
+        <p className="text-xs text-gray-400">This is the secret you saved when locking tokens in HTLC.</p>
+        <input
+          type="text"
+          value={inputSecret}
+          onChange={(e) => setInputSecret(e.target.value.trim())}
+          placeholder="0x..."
+          className={`w-full px-3 py-2 rounded-lg border text-xs font-mono bg-dark-card text-gray-100 focus:outline-none focus:ring-1 ${
+            inputSecret
+              ? isValidSecret
+                ? 'border-green-500/60 focus:ring-green-500'
+                : 'border-red-500/60 focus:ring-red-500'
+              : 'border-gray-600 focus:ring-blue-500'
+          }`}
+        />
+        {inputSecret && !isValidSecret && (
+          <p className="text-xs text-red-400">Invalid format — must be 0x followed by 64 hex characters</p>
+        )}
+      </div>
+
+      {error && <div className="p-2 rounded bg-red-500/10 text-red-400 text-xs">{error}</div>}
+
       {isSuccess ? (
         <div className="p-2 rounded bg-green-500/10 text-green-400 text-xs">
           Withdrawal successful! Secret revealed on-chain.
@@ -908,7 +819,7 @@ function CreatorWithdrawAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate:
           variant="primary"
           loading={isPending || isConfirming}
           onClick={handleWithdraw}
-          disabled={isPending || isConfirming}
+          disabled={!isValidSecret || isPending || isConfirming}
         >
           {isPending || isConfirming ? 'Withdrawing...' : 'Withdraw & Reveal Secret'}
         </Button>
@@ -1035,8 +946,8 @@ function RefundAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () => vo
   const { meta } = swap;
   const [error, setError] = useState<string | null>(null);
 
-  // Determine which HTLC to refund
-  const refundChain = meta.role === 'creator' ? meta.sourceChainId : meta.targetChainId;
+  // Determine which HTLC to refund (EVM-specific action)
+  const refundChain = (meta.role === 'creator' ? meta.sourceChainId : meta.targetChainId) as number;
   const swapIdToRefund = meta.role === 'creator' ? meta.creatorHtlcSwapId : meta.matcherHtlcSwapId;
 
   const { refund, isPending, isConfirming, isSuccess } = useRefundHTLC(refundChain);
@@ -1096,7 +1007,7 @@ function CompleteAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () => 
   const { meta } = swap;
   const [error, setError] = useState<string | null>(null);
 
-  const { completeOrder, isPending, isConfirming, isSuccess } = useCompleteOrder(meta.sourceChainId);
+  const { completeOrder, isPending, isConfirming, isSuccess } = useCompleteOrder(meta.sourceChainId as number);
 
   useEffect(() => {
     if (isSuccess) {

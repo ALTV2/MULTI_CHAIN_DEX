@@ -11,16 +11,16 @@ import { toast } from 'sonner';
 
 const PACKAGE_ID = '0x0e1c4290fd26aa735b593afac46f28fc69e8558937c148b9ec0d67429af7fc96';
 const ORDER_BOOK_ID = '0xa58f40f49713b1a878b6f951626c1e7f56211c69c07433d360485d281ab4a4e0';
-const CLOCK_OBJECT_ID = '0x6'; // SUI Clock object
+const CLOCK_OBJECT_ID = '0x6';
 
 export interface CreateSuiOrderParams {
-  sellToken: string; // Token type (e.g., "0x2::sui::SUI")
-  sellAmount: bigint; // Amount in base units (e.g., 500000000 for 0.5 SUI with 9 decimals)
+  sellToken: string;
+  sellAmount: bigint;
   buyToken: string;
-  buyAmount: bigint; // Amount in base units
+  buyAmount: bigint;
   targetChainId: number;
-  targetAddress: string; // Where to receive tokens on target chain
-  minTimelock: bigint; // Minimum HTLC timelock in seconds (default: 3600)
+  targetAddress: string;
+  minTimelock: bigint;
   expiresAt: bigint;
 }
 
@@ -33,7 +33,96 @@ export interface SuiOrder {
   buyAmount: bigint;
   targetChainId: number;
   expiresAt: bigint;
-  status: 'Active' | 'Matched' | 'Completed' | 'Cancelled';
+  status: 'Active' | 'Matched' | 'Completed' | 'Cancelled' | 'Expired';
+}
+
+const STATUS_MAP: Record<number, SuiOrder['status']> = {
+  0: 'Active',
+  1: 'Matched',
+  2: 'Completed',
+  3: 'Cancelled',
+  4: 'Expired',
+};
+
+/**
+ * Parse raw dynamic field content into a SuiOrder.
+ * Returns null if data is malformed — does not throw.
+ */
+function parseSuiOrder(rawFields: unknown): SuiOrder | null {
+  try {
+    const fields = (rawFields as any)?.value?.fields;
+    if (!fields) return null;
+
+    const statusNum = parseInt(String(fields.status ?? '0'), 10);
+
+    return {
+      id: String(fields.id ?? ''),
+      creator: String(fields.creator ?? ''),
+      sellToken: new TextDecoder().decode(new Uint8Array(fields.sell_token ?? [])),
+      sellAmount: BigInt(fields.sell_amount ?? 0),
+      buyToken: new TextDecoder().decode(new Uint8Array(fields.buy_token ?? [])),
+      buyAmount: BigInt(fields.buy_amount ?? 0),
+      targetChainId: parseInt(String(fields.target_chain_id ?? '0'), 10),
+      expiresAt: BigInt(fields.expires_at ?? 0),
+      status: STATUS_MAP[statusNum] ?? 'Cancelled',
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch the Table object ID from the OrderBook shared object.
+ */
+async function getOrdersTableId(
+  client: ReturnType<typeof useSuiClient>
+): Promise<string> {
+  const obj = await client.getObject({
+    id: ORDER_BOOK_ID,
+    options: { showContent: true },
+  });
+
+  if (!obj.data?.content || !('fields' in obj.data.content)) {
+    throw new Error('OrderBook not found or has no content');
+  }
+
+  const tableId = (obj.data.content.fields as any)?.orders?.fields?.id?.id;
+  if (!tableId) throw new Error('Orders Table ID not found in OrderBook');
+
+  return tableId as string;
+}
+
+/**
+ * Fetch all orders from the Table via dynamic fields.
+ */
+async function fetchAllOrders(
+  client: ReturnType<typeof useSuiClient>
+): Promise<SuiOrder[]> {
+  const tableId = await getOrdersTableId(client);
+
+  const dynamicFields = await client.getDynamicFields({ parentId: tableId });
+  if (!dynamicFields.data?.length) return [];
+
+  const results = await Promise.allSettled(
+    dynamicFields.data.map((field) =>
+      client.getDynamicFieldObject({
+        parentId: tableId,
+        name: { type: 'u64', value: field.name.value as string },
+      })
+    )
+  );
+
+  const orders: SuiOrder[] = [];
+  for (const result of results) {
+    if (result.status !== 'fulfilled') continue;
+    const fieldObj = result.value;
+    if (!fieldObj.data?.content || !('fields' in fieldObj.data.content)) continue;
+
+    const parsed = parseSuiOrder(fieldObj.data.content.fields);
+    if (parsed) orders.push(parsed);
+  }
+
+  return orders;
 }
 
 /**
@@ -47,17 +136,13 @@ export function useCreateSuiOrder() {
 
   const createOrder = useCallback(
     async (params: CreateSuiOrderParams) => {
-      if (!account) {
-        throw new Error('SUI wallet not connected');
-      }
+      if (!account) throw new Error('SUI wallet not connected');
 
       setIsPending(true);
       setError(null);
 
       try {
         const tx = new Transaction();
-
-        // Convert token addresses to bytes
         const sellTokenBytes = Array.from(new TextEncoder().encode(params.sellToken));
         const buyTokenBytes = Array.from(new TextEncoder().encode(params.buyToken));
 
@@ -77,16 +162,13 @@ export function useCreateSuiOrder() {
           ],
         });
 
-        const result = await signAndExecute({
-          transaction: tx,
-        });
-
-        toast.success('Order created successfully on SUI!');
+        const result = await signAndExecute({ transaction: tx });
+        toast.success('Order created on SUI!');
         return result.digest;
       } catch (err: any) {
-        const errorMsg = err.message || 'Failed to create order';
-        setError(errorMsg);
-        toast.error(errorMsg);
+        const msg = err?.message || 'Failed to create order';
+        setError(msg);
+        toast.error(msg);
         throw err;
       } finally {
         setIsPending(false);
@@ -109,36 +191,32 @@ export function useMatchSuiOrder() {
 
   const matchOrder = useCallback(
     async (orderId: string, swapId: string) => {
-      if (!account) {
-        throw new Error('SUI wallet not connected');
-      }
+      if (!account) throw new Error('SUI wallet not connected');
 
       setIsPending(true);
       setError(null);
 
       try {
         const tx = new Transaction();
+        const swapIdBytes = Array.from(Buffer.from(swapId.replace('0x', ''), 'hex'));
 
         tx.moveCall({
           target: `${PACKAGE_ID}::cross_chain_order_book::match_order`,
           arguments: [
             tx.object(ORDER_BOOK_ID),
             tx.pure.u64(orderId),
-            tx.pure.vector('u8', Array.from(Buffer.from(swapId.slice(2), 'hex'))),
+            tx.pure.vector('u8', swapIdBytes),
             tx.object(CLOCK_OBJECT_ID),
           ],
         });
 
-        const result = await signAndExecute({
-          transaction: tx,
-        });
-
-        toast.success('Order matched successfully on SUI!');
+        const result = await signAndExecute({ transaction: tx });
+        toast.success('Order matched on SUI!');
         return result.digest;
       } catch (err: any) {
-        const errorMsg = err.message || 'Failed to match order';
-        setError(errorMsg);
-        toast.error(errorMsg);
+        const msg = err?.message || 'Failed to match order';
+        setError(msg);
+        toast.error(msg);
         throw err;
       } finally {
         setIsPending(false);
@@ -161,31 +239,25 @@ export function useCancelSuiOrder() {
 
   const cancelOrder = useCallback(
     async (orderId: string) => {
-      if (!account) {
-        throw new Error('SUI wallet not connected');
-      }
+      if (!account) throw new Error('SUI wallet not connected');
 
       setIsPending(true);
       setError(null);
 
       try {
         const tx = new Transaction();
-
         tx.moveCall({
           target: `${PACKAGE_ID}::cross_chain_order_book::cancel_order`,
           arguments: [tx.object(ORDER_BOOK_ID), tx.pure.u64(orderId)],
         });
 
-        const result = await signAndExecute({
-          transaction: tx,
-        });
-
-        toast.success('Order cancelled successfully on SUI!');
+        const result = await signAndExecute({ transaction: tx });
+        toast.success('Order cancelled on SUI!');
         return result.digest;
       } catch (err: any) {
-        const errorMsg = err.message || 'Failed to cancel order';
-        setError(errorMsg);
-        toast.error(errorMsg);
+        const msg = err?.message || 'Failed to cancel order';
+        setError(msg);
+        toast.error(msg);
         throw err;
       } finally {
         setIsPending(false);
@@ -198,9 +270,8 @@ export function useCancelSuiOrder() {
 }
 
 /**
- * Hook to query active orders from SUI OrderBook
- * Note: This is a simplified version. In production, you'd use SUI's
- * dynamic field queries to fetch orders from the Table structure.
+ * Hook to query active SUI orders, optionally filtered by target EVM chain.
+ * Polls every 10 seconds.
  */
 export function useSuiOrders(targetChainId?: number) {
   const client = useSuiClient();
@@ -209,183 +280,33 @@ export function useSuiOrders(targetChainId?: number) {
   const [error, setError] = useState<string | null>(null);
   const [refetchTrigger, setRefetchTrigger] = useState(0);
 
-  // Manual refetch function
-  const refetch = () => {
-    console.log('🔄 [useSuiOrders] Manual refetch triggered');
-    setRefetchTrigger((prev) => prev + 1);
-  };
+  const refetch = useCallback(() => setRefetchTrigger((n) => n + 1), []);
 
   useEffect(() => {
     let isMounted = true;
 
-    const fetchOrders = async () => {
-      console.log('🔍 [useSuiOrders] fetchOrders called, targetChainId:', targetChainId);
+    const load = async () => {
       setIsLoading(true);
       setError(null);
 
       try {
-        // Fetch the OrderBook object
-        console.log('🔍 [useSuiOrders] Fetching OrderBook object...');
-        const orderBookObject = await client.getObject({
-          id: ORDER_BOOK_ID,
-          options: {
-            showContent: true,
-            showType: true,
-          },
-        });
-        console.log('🔍 [useSuiOrders] OrderBook object:', orderBookObject);
+        const all = await fetchAllOrders(client);
+        const active = all.filter((o) => o.status === 'Active');
+        const filtered =
+          targetChainId !== undefined
+            ? active.filter((o) => o.targetChainId === targetChainId)
+            : active;
 
-        if (!orderBookObject.data) {
-          throw new Error('OrderBook not found');
-        }
-
-        // Debug: Check OrderBook state
-        if (!orderBookObject.data.content || !('fields' in orderBookObject.data.content)) {
-          throw new Error('OrderBook content not found');
-        }
-
-        const fields = orderBookObject.data.content.fields as any;
-        console.log('📊 [DEBUG] OrderBook state:', {
-          next_order_id: fields.next_order_id,
-          chain_id: fields.chain_id,
-          supported_chains: fields.supported_chains,
-          orders_table_id: fields.orders?.fields?.id?.id || 'N/A',
-        });
-
-        // Critical check: if next_order_id is still 1, no orders were created
-        if (fields.next_order_id === '1') {
-          console.warn('⚠️ next_order_id is still 1 - no orders have been created successfully!');
-        }
-
-        // CRITICAL FIX: Get the Table object ID from the orders field
-        // The Table stores its entries as dynamic fields on the Table object itself,
-        // not on the parent OrderBook object!
-        const tableObjectId = fields.orders?.fields?.id?.id;
-        if (!tableObjectId) {
-          throw new Error('Orders Table ID not found in OrderBook');
-        }
-        console.log('📋 [useSuiOrders] Orders Table ID:', tableObjectId);
-
-        // Query dynamic fields of the TABLE object (not OrderBook!)
-        console.log('🔍 [useSuiOrders] Fetching dynamic fields from Table...');
-        const dynamicFields = await client.getDynamicFields({
-          parentId: tableObjectId, // Use Table ID, not OrderBook ID!
-        });
-        console.log('🔍 [useSuiOrders] Dynamic fields:', dynamicFields);
-
-        if (!dynamicFields.data || dynamicFields.data.length === 0) {
-          console.log('🔍 [useSuiOrders] No dynamic fields found');
-          if (isMounted) {
-            setOrders([]);
-          }
-          return;
-        }
-
-        // Fetch each order from dynamic fields
-        const orderPromises = dynamicFields.data.map(async (field) => {
-          try {
-            console.log('🔍 [DEBUG] Fetching field:', field);
-
-            const fieldObject = await client.getDynamicFieldObject({
-              parentId: tableObjectId, // Use Table ID, not OrderBook ID!
-              name: {
-                type: 'u64',
-                value: field.name.value as string,
-              },
-            });
-
-            console.log('🔍 [DEBUG] Full fieldObject structure:', JSON.stringify(fieldObject, null, 2));
-
-            if (fieldObject.data && fieldObject.data.content && 'fields' in fieldObject.data.content) {
-              const fields = fieldObject.data.content.fields as any;
-              console.log('🔍 [DEBUG] fields:', fields);
-
-              // CRITICAL FIX: The order data is in fields.value.fields, not fields.value!
-              // fields.value = { type: "...", fields: { actual order data } }
-              const orderValue = fields.value as any;
-              const order = orderValue.fields as any;
-              console.log('🔍 [DEBUG] order (fields.value.fields):', order);
-
-              console.log('✅ [useSuiOrders] Found order:', {
-                id: order.id,
-                creator: order.creator,
-                sell_token_bytes: order.sell_token,
-                buy_token_bytes: order.buy_token,
-                target_chain_id: order.target_chain_id,
-                status: order.status,
-              });
-
-              // Parse order data
-              const parsedOrder = {
-                id: order.id,
-                creator: order.creator,
-                sellToken: new TextDecoder().decode(new Uint8Array(order.sell_token)),
-                sellAmount: BigInt(order.sell_amount),
-                buyToken: new TextDecoder().decode(new Uint8Array(order.buy_token)),
-                buyAmount: BigInt(order.buy_amount),
-                targetChainId: parseInt(order.target_chain_id),
-                expiresAt: BigInt(order.expires_at),
-                status: order.status === 0 ? 'Active' : order.status === 1 ? 'Matched' : order.status === 2 ? 'Completed' : 'Cancelled',
-              } as SuiOrder;
-
-              console.log('✅ [useSuiOrders] Parsed order:', parsedOrder);
-              return parsedOrder;
-            }
-            return null;
-          } catch (err) {
-            console.error('❌ Error fetching order field:', err);
-            return null;
-          }
-        });
-
-        const allOrders = (await Promise.all(orderPromises)).filter(
-          (order): order is SuiOrder => order !== null
-        );
-
-        // CRITICAL: Filter out cancelled/completed orders - only show Active orders
-        const activeOrders = allOrders.filter((order) => order.status === 'Active');
-
-        // Filter by target chain if specified
-        const filteredOrders = targetChainId !== undefined
-          ? activeOrders.filter((order) => order.targetChainId === targetChainId)
-          : activeOrders;
-
-        console.log('📦 SUI Orders fetched:', {
-          total: allOrders.length,
-          active: activeOrders.length,
-          filtered: filteredOrders.length,
-          targetChainIdFilter: targetChainId,
-          orders: filteredOrders.map(o => ({
-            id: o.id,
-            status: o.status,
-            sell: o.sellToken,
-            buy: o.buyToken,
-            targetChain: o.targetChainId,
-            creator: o.creator,
-          })),
-        });
-
-        if (isMounted) {
-          setOrders(filteredOrders);
-        }
+        if (isMounted) setOrders(filtered);
       } catch (err: any) {
-        if (isMounted) {
-          const errorMsg = err.message || 'Failed to fetch SUI orders';
-          setError(errorMsg);
-          console.error('Error fetching SUI orders:', err);
-        }
+        if (isMounted) setError(err?.message || 'Failed to fetch SUI orders');
       } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
+        if (isMounted) setIsLoading(false);
       }
     };
 
-    fetchOrders();
-
-    // Poll for updates every 10 seconds
-    const interval = setInterval(fetchOrders, 10000);
-
+    load();
+    const interval = setInterval(load, 10_000);
     return () => {
       isMounted = false;
       clearInterval(interval);
@@ -396,7 +317,7 @@ export function useSuiOrders(targetChainId?: number) {
 }
 
 /**
- * Hook to get a specific order by ID from SUI
+ * Hook to get a single SUI order by its numeric ID.
  */
 export function useSuiOrder(orderId: string | undefined) {
   const client = useSuiClient();
@@ -412,32 +333,31 @@ export function useSuiOrder(orderId: string | undefined) {
 
     let isMounted = true;
 
-    const fetchOrder = async () => {
+    const load = async () => {
       setIsLoading(true);
       setError(null);
 
       try {
-        // TODO: Query the specific order from the Table structure
-        // This requires querying dynamic fields with the order ID as key
+        const tableId = await getOrdersTableId(client);
+        const fieldObj = await client.getDynamicFieldObject({
+          parentId: tableId,
+          name: { type: 'u64', value: orderId },
+        });
 
-        if (isMounted) {
-          setOrder(null);
+        if (!fieldObj.data?.content || !('fields' in fieldObj.data.content)) {
+          throw new Error(`Order ${orderId} not found`);
         }
+
+        const parsed = parseSuiOrder(fieldObj.data.content.fields);
+        if (isMounted) setOrder(parsed);
       } catch (err: any) {
-        if (isMounted) {
-          const errorMsg = err.message || 'Failed to fetch SUI order';
-          setError(errorMsg);
-          console.error('Error fetching SUI order:', err);
-        }
+        if (isMounted) setError(err?.message || 'Failed to fetch SUI order');
       } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
+        if (isMounted) setIsLoading(false);
       }
     };
 
-    fetchOrder();
-
+    load();
     return () => {
       isMounted = false;
     };

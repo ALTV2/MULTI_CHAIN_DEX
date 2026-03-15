@@ -9,8 +9,9 @@ import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import '@rainbow-me/rainbowkit/styles.css';
 
-// Initialize chain adapters (side-effect import)
+// Initialize chain adapters (side-effect imports)
 import '@/lib/chains/evm';
+import '@/lib/chains/sui';
 
 const queryClient = new QueryClient({
   defaultOptions: {

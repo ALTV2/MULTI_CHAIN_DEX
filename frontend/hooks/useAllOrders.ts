@@ -99,7 +99,7 @@ export function useAllOrders(params: {
         targetAddress: suiOrder.creator as `0x${string}`,
         minTimelock: BigInt(3600),
         expiresAt: suiOrder.expiresAt,
-        status: suiOrder.status === 'Active' ? 0 : suiOrder.status === 'Matched' ? 1 : suiOrder.status === 'Completed' ? 2 : 3,
+        status: suiOrder.status as any,
         matchedBy: '0x0000000000000000000000000000000000000000' as `0x${string}`,
         htlcSwapId: '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`,
 

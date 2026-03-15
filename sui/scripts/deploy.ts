@@ -1,9 +1,9 @@
 import { execSync } from 'child_process';
 import { writeFileSync, readFileSync } from 'fs';
-import { SuiClient, getFullnodeUrl } from '@mysten/sui.js/client';
+import { getFullnodeUrl, SuiClient } from '@mysten/sui.js/client';
 import { Ed25519Keypair } from '@mysten/sui.js/keypairs/ed25519';
 import { decodeSuiPrivateKey } from '@mysten/sui.js/cryptography';
-import { TransactionBlock } from '@mysten/sui.js/transactions';
+import { Transaction } from '@mysten/sui.js/transactions';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
@@ -20,7 +20,6 @@ interface DeploymentInfo {
 async function main() {
   console.log('🚀 Deploying Multi-Chain DEX contracts to SUI testnet...\n');
 
-  // Validate environment
   const mnemonic = process.env.SUI_MNEMONIC;
   const privateKey = process.env.SUI_PRIVATE_KEY;
 
@@ -32,19 +31,16 @@ async function main() {
   console.log('📦 Building Move package...');
   try {
     execSync('sui move build', { cwd: __dirname + '/..', stdio: 'inherit' });
-  } catch (error) {
+  } catch {
     console.error('❌ Build failed');
     process.exit(1);
   }
 
-  // Setup client
   const rpcUrl = process.env.SUI_RPC_URL || getFullnodeUrl('testnet');
   const client = new SuiClient({ url: rpcUrl });
 
-  // Derive keypair from mnemonic or private key
   let keypair: Ed25519Keypair;
   if (privateKey) {
-    // Decode bech32 encoded private key
     const { secretKey } = decodeSuiPrivateKey(privateKey);
     keypair = Ed25519Keypair.fromSecretKey(secretKey);
   } else {
@@ -52,10 +48,8 @@ async function main() {
   }
 
   const address = keypair.getPublicKey().toSuiAddress();
-
   console.log(`\n👤 Deployer: ${address}`);
 
-  // Check balance
   const balance = await client.getBalance({ owner: address });
   const balanceSUI = Number(balance.totalBalance) / 1_000_000_000;
   console.log(`💰 Balance: ${balanceSUI.toFixed(4)} SUI`);
@@ -71,30 +65,25 @@ async function main() {
   const compiledModules = modulesDir
     .filter((file: string) => file.endsWith('.mv'))
     .map((file: string) => {
-      const path = `${compiledModulesPath}/${file}`;
-      return Array.from(readFileSync(path));
+      return Array.from(readFileSync(`${compiledModulesPath}/${file}`));
     });
 
   console.log(`\n📝 Publishing ${compiledModules.length} modules...`);
 
-  // Create publish transaction
-  const tx = new TransactionBlock();
+  const tx = new Transaction();
   const [upgradeCap] = tx.publish({
     modules: compiledModules,
     dependencies: [
-      '0x0000000000000000000000000000000000000000000000000000000000000001', // std
-      '0x0000000000000000000000000000000000000000000000000000000000000002', // sui
+      '0x0000000000000000000000000000000000000000000000000000000000000001',
+      '0x0000000000000000000000000000000000000000000000000000000000000002',
     ],
   });
+  tx.transferObjects([upgradeCap], address);
 
-  // Transfer upgrade capability to deployer
-  tx.transferObjects([upgradeCap], tx.pure(address));
-
-  // Execute transaction
   console.log('⏳ Waiting for transaction confirmation...');
-  const result = await client.signAndExecuteTransactionBlock({
+  const result = await client.signAndExecuteTransaction({
     signer: keypair,
-    transactionBlock: tx,
+    transaction: tx,
     options: {
       showEffects: true,
       showEvents: true,
@@ -104,68 +93,47 @@ async function main() {
 
   console.log(`✅ Transaction successful: ${result.digest}`);
 
-  // Extract package ID
   const packageId = result.objectChanges?.find(
     (change) => change.type === 'published'
   )?.packageId;
 
-  if (!packageId) {
-    throw new Error('Failed to extract package ID from transaction');
-  }
-
+  if (!packageId) throw new Error('Failed to extract package ID from transaction');
   console.log(`\n📦 Package ID: ${packageId}`);
 
-  // Find created objects (OrderBook should be created by init function)
-  const createdObjects = result.objectChanges?.filter(
-    (change) => change.type === 'created'
-  );
-
+  const createdObjects = result.objectChanges?.filter((c) => c.type === 'created');
   console.log(`\n📋 Created ${createdObjects?.length || 0} objects:`);
   createdObjects?.forEach((obj: any, i: number) => {
     console.log(`  ${i + 1}. ${obj.objectType}: ${obj.objectId}`);
   });
 
-  // Find OrderBook object
   const orderBookObject = createdObjects?.find((obj: any) =>
     obj.objectType?.includes('cross_chain_order_book::OrderBook')
   );
 
-  const orderBookObjectId = orderBookObject?.objectId || '';
-
+  const orderBookObjectId = (orderBookObject as any)?.objectId || '';
   if (!orderBookObjectId) {
     console.warn('⚠️  OrderBook object not found in created objects');
-    console.warn('   You may need to manually call init functions');
   } else {
     console.log(`\n📖 OrderBook Object ID: ${orderBookObjectId}`);
   }
 
-  // Add supported chains to CrossChainOrderBook
+  // Add supported chains
   console.log('\n🔗 Adding supported chains...');
-
   try {
-    const addChainTx = new TransactionBlock();
+    const addChainTx = new Transaction();
 
-    // Add Ethereum Sepolia (11155111)
     addChainTx.moveCall({
       target: `${packageId}::cross_chain_order_book::add_supported_chain`,
-      arguments: [
-        addChainTx.object(orderBookObjectId),
-        addChainTx.pure(11155111),
-      ],
+      arguments: [addChainTx.object(orderBookObjectId), addChainTx.pure.u64(11155111)],
     });
-
-    // Add Polygon Amoy (80002)
     addChainTx.moveCall({
       target: `${packageId}::cross_chain_order_book::add_supported_chain`,
-      arguments: [
-        addChainTx.object(orderBookObjectId),
-        addChainTx.pure(80002),
-      ],
+      arguments: [addChainTx.object(orderBookObjectId), addChainTx.pure.u64(80002)],
     });
 
-    const chainResult = await client.signAndExecuteTransactionBlock({
+    const chainResult = await client.signAndExecuteTransaction({
       signer: keypair,
-      transactionBlock: addChainTx,
+      transaction: addChainTx,
     });
 
     console.log(`  ✅ Added Ethereum Sepolia (11155111)`);
@@ -175,14 +143,13 @@ async function main() {
     console.error('  ⚠️  Failed to add chains:', error.message);
   }
 
-  // Save deployment info
   const deploymentInfo: DeploymentInfo = {
     network: 'testnet',
     packageId,
     orderBookObjectId,
     deployer: address,
     deployedAt: new Date().toISOString(),
-    supportedChains: [11155111, 80002], // Sepolia, Polygon Amoy
+    supportedChains: [11155111, 80002],
   };
 
   writeFileSync(
@@ -191,8 +158,6 @@ async function main() {
   );
 
   console.log('\n💾 Deployment info saved to deployment-info.json');
-
-  // Print summary
   console.log('\n' + '='.repeat(60));
   console.log('🎉 DEPLOYMENT SUMMARY');
   console.log('='.repeat(60));
@@ -202,11 +167,9 @@ async function main() {
   console.log(`Deployer:         ${address}`);
   console.log(`Explorer:         https://suiexplorer.com/object/${packageId}?network=testnet`);
   console.log('='.repeat(60));
-
   console.log('\n📝 Next steps:');
   console.log('  1. Run: npm run init-tokens');
   console.log('  2. Update frontend/lib/contracts/addresses.ts with package ID');
-  console.log('  3. Test contracts with: sui client call ...');
 }
 
 main()

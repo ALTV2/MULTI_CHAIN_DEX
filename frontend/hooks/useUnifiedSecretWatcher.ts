@@ -28,7 +28,7 @@ export function useUnifiedSecretWatcher(
     setSecret(revealedSecret);
   }, []);
 
-  const { isWatching: isSuiWatching } = useSuiSecretWatcher(
+  const { isWatching: isSuiWatching, error: suiError } = useSuiSecretWatcher(
     enabled && isSuiChain ? swapId : undefined,
     handleSuiSecret
   );
@@ -46,7 +46,7 @@ export function useUnifiedSecretWatcher(
   }, [swapId]);
 
   const isLoading = isSuiChain ? isSuiWatching : evmWatcher.isLoading;
-  const error = isSuiChain ? null : evmWatcher.error;
+  const error = isSuiChain ? suiError : evmWatcher.error;
   const refetch = isSuiChain ? () => {} : evmWatcher.refetch;
 
   return {

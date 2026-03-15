@@ -57,7 +57,7 @@ export function getSwaps(walletAddress: string): StoredSwapMeta[] {
   }
 }
 
-export function getSwap(walletAddress: string, orderId: string, sourceChainId?: number): StoredSwapMeta | undefined {
+export function getSwap(walletAddress: string, orderId: string, sourceChainId?: number | string): StoredSwapMeta | undefined {
   return getSwaps(walletAddress).find((s) => matchSwap(s, orderId, sourceChainId));
 }
 
@@ -77,20 +77,20 @@ export function updateSwap(
   walletAddress: string,
   orderId: string,
   updates: Partial<StoredSwapMeta>,
-  sourceChainId?: number
+  sourceChainId?: number | string
 ): void {
   const existing = getSwap(walletAddress, orderId, sourceChainId);
   if (!existing) return;
   saveSwap(walletAddress, { ...existing, ...updates });
 }
 
-export function removeSwap(walletAddress: string, orderId: string, sourceChainId?: number): void {
+export function removeSwap(walletAddress: string, orderId: string, sourceChainId?: number | string): void {
   if (typeof window === 'undefined') return;
   const swaps = getSwaps(walletAddress).filter((s) => !matchSwap(s, orderId, sourceChainId));
   localStorage.setItem(getStorageKey(walletAddress), JSON.stringify(swaps));
 }
 
-export function getSecret(walletAddress: string, orderId: string, sourceChainId?: number): string | undefined {
+export function getSecret(walletAddress: string, orderId: string, sourceChainId?: number | string): string | undefined {
   return getSwap(walletAddress, orderId, sourceChainId)?.secret;
 }
 

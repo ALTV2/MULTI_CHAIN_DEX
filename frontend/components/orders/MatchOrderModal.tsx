@@ -81,6 +81,13 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
     }
   }, [address, suiAccount, isSuiSource]);
 
+  // For EVM → EVM: matchOrder is called on the SOURCE chain CCOB, so wallet must be on source chain.
+  // For EVM → SUI: matchOrder also called on source chain (EVM), same rule.
+  // For SUI → EVM: handled separately via evmHTLCHook on target chain.
+  const requiredChainForMatch = isSuiSource
+    ? (typeof targetChainId === 'number' ? targetChainId : null) // SUI→EVM: EVM HTLC on target
+    : (typeof sourceChainId === 'number' ? sourceChainId : null); // EVM→*: matchOrder on source
+
   // Handle success for cross-chain orders
   useEffect(() => {
     if (crossChainHook.isSuccess && order && address && !isSameChain) {
@@ -170,7 +177,7 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
 
   const sellToken = getTokenByAddress(sourceChainId, order.sellToken);
   const buyToken = getTokenByAddress(targetChainId, order.buyToken); // Buy token is on target chain
-  const needsChainSwitch = !isSuiTarget && currentChainId !== targetChainId;
+  const needsChainSwitch = requiredChainForMatch !== null && currentChainId !== requiredChainForMatch;
 
   // Validate EVM address format (0x + 40 hex chars)
   const isValidEvmAddress = (addr: string) => {
@@ -232,8 +239,8 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
       return;
     }
 
-    if (needsChainSwitch && !isSuiTarget) {
-      switchChain({ chainId: targetChainId as number });
+    if (needsChainSwitch && requiredChainForMatch !== null) {
+      switchChain({ chainId: requiredChainForMatch });
       return;
     }
 
@@ -498,7 +505,7 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
           }
         >
           {needsChainSwitch
-            ? `Switch to ${targetConfig?.shortName || safeTargetConfig.shortName}`
+            ? `Switch to ${getChainConfig(requiredChainForMatch!)?.shortName || 'required chain'}`
             : (sameChainHook.txHash || crossChainHook.hash)
               ? 'Waiting for confirmation...'
               : isPending

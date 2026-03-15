@@ -119,7 +119,7 @@ export function useMyeCrossChainOrders(chainId: number) {
       return data || [];
     },
     enabled: !!address && !!ccobAddress,
-    refetchOnMount: false, // Don't refetch on mount if data exists
+    refetchOnMount: true, // Always refetch on mount to get latest orders
     refetchOnWindowFocus: false, // Don't refetch on window focus
     refetchOnReconnect: false, // Don't refetch on network reconnect
     gcTime: 5 * 60 * 1000, // Keep cache for 5 minutes even when unmounted

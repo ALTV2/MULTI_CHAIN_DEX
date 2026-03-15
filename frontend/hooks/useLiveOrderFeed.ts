@@ -44,7 +44,10 @@ function getClient(chainId: number) {
 async function fetchAllActiveOrders(): Promise<LiveOrder[]> {
   const allChainIds = getSupportedChainIds();
   // Filter for EVM chains only (this function uses EVM contracts)
-  const chainIds = allChainIds.filter((id) => typeof id === 'number') as number[];
+  // Note: Object.keys() always returns strings, so we filter by excluding SUI chains
+  const chainIds = allChainIds
+    .filter((id) => !String(id).startsWith('sui:'))
+    .map((id) => Number(id));
   const allOrders: LiveOrder[] = [];
 
   // Fetch cross-chain orders

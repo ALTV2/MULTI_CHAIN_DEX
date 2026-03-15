@@ -234,7 +234,7 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
 
   const { needsApproval, approve, isApproving, isApproved } = useTokenApproval(
     !isCrossChain && !isNativeSell && isEvmSource ? (sellToken as `0x${string}`) : undefined,
-    orderBookAddress,
+    (orderBookAddress ?? '0x0000000000000000000000000000000000000000') as `0x${string}`,
     parsedSellAmount
   );
 

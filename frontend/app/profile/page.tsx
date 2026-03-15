@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useAccount, useBalance, useChainId, useDisconnect } from 'wagmi';
+import { useCurrentAccount, useDisconnectWallet, useSuiClientQuery } from '@mysten/dapp-kit';
 import { formatEther } from 'viem';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -13,16 +14,21 @@ import { SwapHistoryTable } from '@/components/profile/SwapHistoryTable';
 import { useCurrentUser } from '@/hooks/useAuth';
 import { useAllUserOrders } from '@/hooks/useAllUserOrders';
 import { useSettingsStore, type SecretStorageMode } from '@/stores/useSettingsStore';
-import { chainConfig, SupportedChainId, getSupportedChainIds } from '@/lib/contracts/addresses';
+import { chainConfig, SupportedChainId } from '@/lib/contracts/addresses';
 import { supportedChains } from '@/lib/contracts/config';
 import { useTranslation } from '@/hooks/useTranslation';
+import { SUI_TKA_TYPE, SUI_TKB_TYPE } from '@/hooks/useSuiSameChainOrders';
+
+const SUI_COLOR = '#4DA2FF';
 
 export default function ProfilePage() {
   const searchParams = useSearchParams();
   const { address, isConnected } = useAccount();
+  const suiAccount = useCurrentAccount();
   const chainId = useChainId();
   const { data: balance } = useBalance({ address });
   const { disconnect } = useDisconnect();
+  const { mutate: disconnectSui } = useDisconnectWallet();
   const { isAuthenticated } = useCurrentUser();
   const { activeSwaps, historySwaps } = useAllUserOrders();
   const { t } = useTranslation();
@@ -34,7 +40,10 @@ export default function ProfilePage() {
     if (tab) setActiveTab(tab);
   }, [searchParams]);
 
-  if (!isConnected) {
+  const hasEvm = isConnected && !!address;
+  const hasSui = !!suiAccount;
+
+  if (!hasEvm && !hasSui) {
     return (
       <div className="max-w-2xl mx-auto py-16 text-center">
         <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent-blue to-accent-purple flex items-center justify-center mx-auto mb-6">
@@ -51,6 +60,10 @@ export default function ProfilePage() {
   }
 
   const currentChainConfig = chainConfig[chainId as SupportedChainId];
+  const displayAddress = hasEvm ? address : suiAccount?.address;
+  const shortAddress = displayAddress
+    ? `${displayAddress.slice(0, 8)}...${displayAddress.slice(-6)}`
+    : '';
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -64,19 +77,24 @@ export default function ProfilePage() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{t('profile.title')}</h1>
-            <p className="text-sm text-gray-500 dark:text-gray-400 font-mono">
-              {address?.slice(0, 8)}...{address?.slice(-6)}
-            </p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 font-mono">{shortAddress}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           {isAuthenticated && <Badge variant="success" dot>{t('profile.signedIn')}</Badge>}
-          <Badge
-            variant="info"
-            style={{ backgroundColor: `${currentChainConfig?.color}20`, color: currentChainConfig?.color }}
-          >
-            {currentChainConfig?.shortName}
-          </Badge>
+          {hasEvm && currentChainConfig && (
+            <Badge
+              variant="info"
+              style={{ backgroundColor: `${currentChainConfig.color}20`, color: currentChainConfig.color }}
+            >
+              {currentChainConfig.shortName}
+            </Badge>
+          )}
+          {hasSui && (
+            <Badge variant="info" style={{ backgroundColor: `${SUI_COLOR}20`, color: SUI_COLOR }}>
+              SUI Testnet
+            </Badge>
+          )}
         </div>
       </div>
 
@@ -96,21 +114,7 @@ export default function ProfilePage() {
       {activeTab === 'overview' && (
         <TabPanel>
           <div className="grid md:grid-cols-3 gap-6">
-            <Card variant="glass">
-              <CardContent className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-500">{t('profile.balance')}</span>
-                  <span className="text-xs" style={{ color: currentChainConfig?.color }}>
-                    {currentChainConfig?.shortName}
-                  </span>
-                </div>
-                <div className="text-3xl font-bold text-gray-900 dark:text-white">
-                  {balance ? parseFloat(formatEther(balance.value)).toFixed(4) : '0'}
-                  <span className="text-lg text-gray-400 ml-1">{balance?.symbol}</span>
-                </div>
-              </CardContent>
-            </Card>
-
+            {/* Active swaps */}
             <Card variant="glass">
               <CardContent className="space-y-3">
                 <span className="text-sm text-gray-500">{t('profile.inProgress')}</span>
@@ -118,6 +122,7 @@ export default function ProfilePage() {
               </CardContent>
             </Card>
 
+            {/* Completed */}
             <Card variant="glass">
               <CardContent className="space-y-3">
                 <span className="text-sm text-gray-500">{t('profile.completed')}</span>
@@ -125,26 +130,87 @@ export default function ProfilePage() {
               </CardContent>
             </Card>
 
-            {/* Chain balances */}
-            <Card className="md:col-span-3">
-              <CardContent>
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">{t('profile.chainBalances')}</h3>
-                <div className="grid md:grid-cols-2 gap-3">
-                  {supportedChains.map((chain) => {
-                    const config = chainConfig[chain.id as SupportedChainId];
-                    return (
-                      <ChainBalanceCard
-                        key={chain.id}
-                        chainId={chain.id}
-                        address={address!}
-                        isActive={chain.id === chainId}
-                        config={config}
-                      />
-                    );
-                  })}
+            {/* Connected wallets count */}
+            <Card variant="glass">
+              <CardContent className="space-y-3">
+                <span className="text-sm text-gray-500">Connected Wallets</span>
+                <div className="text-3xl font-bold text-accent-purple">
+                  {(hasEvm ? 1 : 0) + (hasSui ? 1 : 0)}
                 </div>
               </CardContent>
             </Card>
+
+            {/* EVM chain balances */}
+            {hasEvm && (
+              <Card className="md:col-span-3">
+                <CardContent>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">{t('profile.chainBalances')}</h3>
+                  <div className="grid md:grid-cols-2 gap-3">
+                    {supportedChains.map((chain) => {
+                      const config = chainConfig[chain.id as SupportedChainId];
+                      return (
+                        <ChainBalanceCard
+                          key={chain.id}
+                          chainId={chain.id}
+                          address={address!}
+                          isActive={chain.id === chainId}
+                          config={config}
+                        />
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* SUI balances */}
+            {hasSui && (
+              <Card className="md:col-span-3">
+                <CardContent>
+                  <div className="flex items-center gap-2 mb-4">
+                    <div
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold"
+                      style={{ backgroundColor: `${SUI_COLOR}15`, color: SUI_COLOR }}
+                    >
+                      S
+                    </div>
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white">SUI Testnet Balances</h3>
+                    <Badge variant="info" style={{ backgroundColor: `${SUI_COLOR}20`, color: SUI_COLOR }}>
+                      Connected
+                    </Badge>
+                  </div>
+                  <div className="grid md:grid-cols-3 gap-3">
+                    <SuiTokenBalanceCard
+                      address={suiAccount!.address}
+                      coinType="0x2::sui::SUI"
+                      symbol="SUI"
+                      decimals={9}
+                      color={SUI_COLOR}
+                    />
+                    <SuiTokenBalanceCard
+                      address={suiAccount!.address}
+                      coinType={SUI_TKA_TYPE}
+                      symbol="sTKA"
+                      decimals={9}
+                      color="#10b981"
+                    />
+                    <SuiTokenBalanceCard
+                      address={suiAccount!.address}
+                      coinType={SUI_TKB_TYPE}
+                      symbol="sTKB"
+                      decimals={9}
+                      color="#8b5cf6"
+                    />
+                  </div>
+                  <div className="mt-3 p-3 bg-light-hover dark:bg-dark-hover rounded-xl">
+                    <span className="text-xs text-gray-400">SUI Address: </span>
+                    <span className="text-xs font-mono text-gray-600 dark:text-gray-300 break-all">
+                      {suiAccount!.address}
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </div>
         </TabPanel>
       )}
@@ -163,9 +229,66 @@ export default function ProfilePage() {
 
       {activeTab === 'settings' && (
         <TabPanel>
-          <SettingsPanel onDisconnect={() => disconnect()} />
+          <SettingsPanel
+            onDisconnect={() => disconnect()}
+            onDisconnectSui={() => disconnectSui()}
+            hasEvm={hasEvm}
+            hasSui={hasSui}
+          />
         </TabPanel>
       )}
+    </div>
+  );
+}
+
+function SuiTokenBalanceCard({
+  address,
+  coinType,
+  symbol,
+  decimals,
+  color,
+}: {
+  address: string;
+  coinType: string;
+  symbol: string;
+  decimals: number;
+  color: string;
+}) {
+  const { data, isLoading } = useSuiClientQuery('getBalance', {
+    owner: address,
+    coinType,
+  });
+
+  const formatted = data
+    ? (Number(data.totalBalance) / Math.pow(10, decimals)).toLocaleString(undefined, {
+        maximumFractionDigits: 4,
+      })
+    : '0';
+
+  return (
+    <div className="flex items-center justify-between p-4 rounded-xl bg-light-hover dark:bg-dark-hover">
+      <div className="flex items-center gap-3">
+        <div
+          className="w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold"
+          style={{ backgroundColor: `${color}15`, color }}
+        >
+          {symbol.charAt(0)}
+        </div>
+        <div>
+          <div className="text-sm font-medium text-gray-900 dark:text-white">{symbol}</div>
+          <div className="text-xs text-gray-400">SUI Testnet</div>
+        </div>
+      </div>
+      <div className="text-right">
+        {isLoading ? (
+          <div className="h-5 w-16 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+        ) : (
+          <span className="text-sm font-semibold text-gray-900 dark:text-white">
+            {formatted}
+            <span className="text-gray-400 ml-1 text-xs">{symbol}</span>
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -216,7 +339,17 @@ function ChainBalanceCard({
   );
 }
 
-function SettingsPanel({ onDisconnect }: { onDisconnect: () => void }) {
+function SettingsPanel({
+  onDisconnect,
+  onDisconnectSui,
+  hasEvm,
+  hasSui,
+}: {
+  onDisconnect: () => void;
+  onDisconnectSui: () => void;
+  hasEvm: boolean;
+  hasSui: boolean;
+}) {
   const { secretStorage, setSecretStorage, defaultTargetWallets } = useSettingsStore();
   const { t } = useTranslation();
 
@@ -233,9 +366,7 @@ function SettingsPanel({ onDisconnect }: { onDisconnect: () => void }) {
         <CardContent className="space-y-4">
           <div>
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{t('profile.settings.secretStorage')}</h3>
-            <p className="text-sm text-gray-500 mt-1">
-              {t('profile.settings.secretStorageDesc')}
-            </p>
+            <p className="text-sm text-gray-500 mt-1">{t('profile.settings.secretStorageDesc')}</p>
           </div>
           <div className="space-y-2">
             {secretOptions.map((opt) => (
@@ -270,18 +401,16 @@ function SettingsPanel({ onDisconnect }: { onDisconnect: () => void }) {
         <CardContent className="space-y-4">
           <div>
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{t('profile.settings.targetWallets')}</h3>
-            <p className="text-sm text-gray-500 mt-1">
-              {t('profile.settings.targetWalletsDesc')}
-            </p>
+            <p className="text-sm text-gray-500 mt-1">{t('profile.settings.targetWalletsDesc')}</p>
           </div>
           {Object.keys(defaultTargetWallets).length === 0 ? (
             <p className="text-sm text-gray-400 italic">{t('profile.settings.noWallets')}</p>
           ) : (
             <div className="space-y-2">
-              {Object.entries(defaultTargetWallets).map(([chainId, addr]) => (
-                <div key={chainId} className="flex items-center justify-between p-3 bg-light-hover dark:bg-dark-hover rounded-xl">
+              {Object.entries(defaultTargetWallets).map(([cid, addr]) => (
+                <div key={cid} className="flex items-center justify-between p-3 bg-light-hover dark:bg-dark-hover rounded-xl">
                   <div>
-                    <span className="text-xs text-gray-400">Chain {chainId}</span>
+                    <span className="text-xs text-gray-400">Chain {cid}</span>
                     <p className="text-sm font-mono text-gray-900 dark:text-white">{addr.slice(0, 10)}...{addr.slice(-6)}</p>
                   </div>
                 </div>
@@ -291,20 +420,35 @@ function SettingsPanel({ onDisconnect }: { onDisconnect: () => void }) {
         </CardContent>
       </Card>
 
-      {/* Disconnect */}
-      <Card className="border-accent-red/20">
-        <CardContent>
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="font-medium text-gray-900 dark:text-white">{t('profile.settings.disconnect')}</h3>
-              <p className="text-sm text-gray-500 mt-0.5">{t('profile.settings.disconnectDesc')}</p>
+      {/* Disconnect EVM */}
+      {hasEvm && (
+        <Card className="border-accent-red/20">
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-medium text-gray-900 dark:text-white">{t('profile.settings.disconnect')} (EVM)</h3>
+                <p className="text-sm text-gray-500 mt-0.5">{t('profile.settings.disconnectDesc')}</p>
+              </div>
+              <Button variant="danger" size="sm" onClick={onDisconnect}>Disconnect</Button>
             </div>
-            <Button variant="danger" size="sm" onClick={onDisconnect}>
-              Disconnect
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Disconnect SUI */}
+      {hasSui && (
+        <Card className="border-accent-red/20">
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-medium text-gray-900 dark:text-white">Disconnect SUI Wallet</h3>
+                <p className="text-sm text-gray-500 mt-0.5">Disconnect your SUI Slush wallet</p>
+              </div>
+              <Button variant="danger" size="sm" onClick={onDisconnectSui}>Disconnect</Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

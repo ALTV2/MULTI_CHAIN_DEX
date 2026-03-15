@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { useAllUnifiedOrdersFixed, type UnifiedOrder } from './useAllUnifiedOrdersFixed';
 import { useAllSameChainOrdersFixed } from './useAllSameChainOrdersFixed';
 import { useSuiOrders } from './useSuiOrders';
+import { useSuiSameChainOrders, SUI_TKA_TYPE, SUI_TKB_TYPE } from './useSuiSameChainOrders';
 import { getTokenByAddress } from '@/lib/constants/tokens';
 
 /**
@@ -26,11 +27,14 @@ export function useAllOrders(params: {
   // Fetch ALL same-chain orders (no filtering by address) - Fixed version with static hooks
   const { orders: sameChainOrders, isLoading: isSameChainLoading } = useAllSameChainOrdersFixed();
 
-  // Fetch SUI orders
+  // Fetch SUI cross-chain orders (SUI → EVM)
   const targetChainNum = typeof targetChainId === 'number' ? targetChainId : undefined;
   const { orders: suiOrders, isLoading: isSuiLoading, refetch: refetchSuiOrders } = useSuiOrders(targetChainNum);
 
-  const isLoading = isCrossChainLoading || isSameChainLoading || isSuiLoading;
+  // Fetch SUI same-chain orders (SUI → SUI)
+  const { orders: suiSameChainOrders, isLoading: isSuiSameChainLoading } = useSuiSameChainOrders();
+
+  const isLoading = isCrossChainLoading || isSameChainLoading || isSuiLoading || isSuiSameChainLoading;
 
   // Get token symbols from selected addresses
   const sourceTokenSymbol = sourceChainId && sourceToken
@@ -116,7 +120,48 @@ export function useAllOrders(params: {
       };
     });
 
-    let combined = [...crossChainOrders, ...sameChainOrders, ...convertedSuiOrders];
+    // Convert SUI same-chain orders to UnifiedOrder format
+    const convertedSuiSameChain: UnifiedOrder[] = suiSameChainOrders
+      .filter((o) => o.status === 'Active')
+      .map((o) => {
+        const sellSymbol = getTokenByAddress('sui:testnet', o.pairConfig.coinAType)?.symbol
+          || o.pairConfig.coinAType.split('::').pop() || 'UNKNOWN';
+        const buySymbol = getTokenByAddress('sui:testnet', o.pairConfig.coinBType)?.symbol
+          || o.pairConfig.coinBType.split('::').pop() || 'UNKNOWN';
+        const SUI_DECIMALS = 9;
+        return {
+          id: BigInt(o.orderId),
+          creator: o.creator as `0x${string}`,
+          sellToken: o.pairConfig.coinAType as `0x${string}`,
+          sellAmount: o.sellAmount,
+          sourceChainId: BigInt(0),
+          buyToken: o.pairConfig.coinBType as `0x${string}`,
+          buyAmount: o.buyAmount,
+          targetChainId: BigInt(0),
+          targetAddress: o.creator as `0x${string}`,
+          minTimelock: BigInt(0),
+          expiresAt: BigInt(0),
+          status: 'Active' as any,
+          matchedBy: '0x0000000000000000000000000000000000000000' as `0x${string}`,
+          htlcSwapId: '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`,
+          price: Number(o.buyAmount) / Number(o.sellAmount),
+          inversePrice: Number(o.sellAmount) / Number(o.buyAmount),
+          sellSymbol,
+          buySymbol,
+          formattedSellAmount: (Number(o.sellAmount) / Math.pow(10, SUI_DECIMALS)).toString(),
+          formattedBuyAmount: (Number(o.buyAmount) / Math.pow(10, SUI_DECIMALS)).toString(),
+          sourceChainIdNum: 'sui:testnet',
+          targetChainIdNum: 'sui:testnet',
+          suiSameChainMeta: {
+            orderObjectId: o.orderObjectId,
+            coinAType: o.pairConfig.coinAType,
+            coinBType: o.pairConfig.coinBType,
+            pairId: o.pairConfig.pairId,
+          },
+        };
+      });
+
+    let combined = [...crossChainOrders, ...sameChainOrders, ...convertedSuiOrders, ...convertedSuiSameChain];
     console.log('  Initial combined orders (including SUI):', combined.length);
 
     // Filter by token symbol (works across chains)
@@ -166,7 +211,7 @@ export function useAllOrders(params: {
 
     // Sort by price (best price first)
     return combined.sort((a, b) => a.price - b.price);
-  }, [crossChainOrders, sameChainOrders, suiOrders, sourceTokenSymbol, targetTokenSymbol, sourceChainId, targetChainId]);
+  }, [crossChainOrders, sameChainOrders, suiOrders, suiSameChainOrders, sourceTokenSymbol, targetTokenSymbol, sourceChainId, targetChainId]);
 
   return {
     orders: allOrders,

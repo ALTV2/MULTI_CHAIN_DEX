@@ -18,6 +18,7 @@ import { useCreateCrossChainOrder } from '@/hooks/useCrossChainOrders';
 import { useCreateOrder } from '@/hooks/useCreateOrder';
 import { useTokenApproval } from '@/hooks/useTokenApproval';
 import { useCreateSuiOrder } from '@/hooks/useSuiOrders';
+import { useCreateSuiSameChainOrder } from '@/hooks/useSuiSameChainOrders';
 import { TargetWalletSelector } from '@/components/swap/TargetWalletSelector';
 import { useTranslation } from '@/hooks/useTranslation';
 import { toast } from 'sonner';
@@ -173,8 +174,11 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
   const { createOrder: createCrossChainOrder, isPending: isCrossChainPending, isConfirming: isCrossChainConfirming, isSuccess: isCrossChainSuccess } = useCreateCrossChainOrder(typeof sourceChainId === 'number' ? sourceChainId : sepolia.id);
   const { createOrder: createSameChainOrder, isCreating: isSameChainCreating, isSuccess: isSameChainSuccess } = useCreateOrder();
 
-  // Hook for SUI order creation (handles both same-chain and cross-chain)
+  // Hook for SUI cross-chain order creation (SUI → EVM)
   const { createOrder: createSuiOrder, isPending: isSuiOrderPending } = useCreateSuiOrder();
+
+  // Hook for SUI same-chain order creation (SUI → SUI)
+  const { createOrder: createSuiSameChainOrder, isPending: isSuiSameChainOrderPending } = useCreateSuiSameChainOrder();
 
   // Reset tokens when chains change
   useEffect(() => {
@@ -261,10 +265,37 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
           return;
         }
 
-        const expiresAt = BigInt(Math.floor(Date.now() / 1000) + parseInt(expiryHours || '48') * 3600);
+        // SUI same-chain orders — route to order_book.move (pair created on-demand)
+        if (isSuiSource && isSuiTarget) {
+          const SUI_DECIMALS = 9;
+          const parsedSell = BigInt(Math.round(parseFloat(sellAmount) * Math.pow(10, SUI_DECIMALS)));
+          const parsedBuy = BigInt(Math.round(parseFloat(buyAmount) * Math.pow(10, SUI_DECIMALS)));
+          await createSuiSameChainOrder({
+            coinAType: sellToken,
+            coinBType: buyToken,
+            sellAmount: parsedSell,
+            buyAmount: parsedBuy,
+          });
+          setSellAmount('');
+          setBuyAmount('');
+          if (onOrderCreated) setTimeout(onOrderCreated, 100);
+          return;
+        }
 
-        // For SUI, we need to convert chainId to number for target chain
-        const targetChain = typeof targetChainId === 'number' ? targetChainId : 0;
+        // EVM→SUI: order must be created from the SUI side
+        if (!isSuiSource && isSuiTarget) {
+          toast.error('To swap EVM→SUI, please select SUI as the source chain');
+          return;
+        }
+
+        // At this point: SUI→EVM only (isSuiSource=true, isSuiTarget=false)
+        const targetChain = typeof targetChainId === 'number' ? targetChainId : null;
+        if (targetChain === null) {
+          toast.error('Invalid target chain for SUI order');
+          return;
+        }
+
+        const expiresAt = BigInt(Math.floor(Date.now() / 1000) + parseInt(expiryHours || '48') * 3600);
 
         // CRITICAL: SUI Move uses u64 for amounts (max: ~18.4 quintillion)
         // With 18 decimals, this limits us to ~18 tokens max - NOT PRACTICAL!
@@ -379,8 +410,8 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
   const userAddress = isSuiOrder ? suiAccount?.address : address;
 
   const isFormValid = sellAmount && buyAmount && parseFloat(sellAmount) > 0 && parseFloat(buyAmount) > 0 && !sameTokenError && walletConnected;
-  const isPending = isCrossChainPending || isSameChainCreating || isApproving || isSuiOrderPending;
-  const isProcessing = isCrossChainPending || isCrossChainConfirming || isSameChainCreating || isApproving || isSuiOrderPending;
+  const isPending = isCrossChainPending || isSameChainCreating || isApproving || isSuiOrderPending || isSuiSameChainOrderPending;
+  const isProcessing = isCrossChainPending || isCrossChainConfirming || isSameChainCreating || isApproving || isSuiOrderPending || isSuiSameChainOrderPending;
 
   return (
     <Card className="max-w-2xl mx-auto">

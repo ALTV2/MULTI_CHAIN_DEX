@@ -11,6 +11,7 @@ import { useMatchCrossChainOrder } from '@/hooks/useCrossChainOrders';
 import { useExecuteOrder } from '@/hooks/useExecuteOrder';
 import { useCreateSuiHTLC } from '@/hooks/useSuiHTLC';
 import { useMatchSuiOrder } from '@/hooks/useSuiOrders';
+import { useFillSuiSameChainOrder, SUI_PAIR_CONFIGS } from '@/hooks/useSuiSameChainOrders';
 import { useCreateHTLCSwap } from '@/hooks/useHTLC';
 import type { UnifiedOrder } from '@/hooks/useAllUnifiedOrdersFixed';
 import { getChainConfig, getExplorerTxUrl } from '@/lib/contracts/addresses';
@@ -80,6 +81,9 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
       setTargetWallet(address);
     }
   }, [address, suiAccount, isSuiSource]);
+
+  const fillSuiSameChainHook = useFillSuiSameChainOrder();
+  const isSuiSameChain = isSuiSource && isSuiTarget;
 
   // For EVM → EVM: matchOrder is called on the SOURCE chain CCOB, so wallet must be on source chain.
   // For EVM → SUI: matchOrder also called on source chain (EVM), same rule.
@@ -196,7 +200,9 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
     ? (targetWallet && isValidSuiAddress(targetWallet))
     : !!targetWallet;
 
-  const isPending = isSameChain
+  const isPending = isSuiSameChain
+    ? fillSuiSameChainHook.isPending
+    : isSameChain
     ? sameChainHook.isExecuting
     : isSuiSource
     ? evmHTLCHook.isPending || suiMatchHook.isPending // SUI → EVM: EVM HTLC + optional SUI matchOrder
@@ -245,7 +251,31 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
     }
 
     try {
-      if (isSameChain) {
+      if (isSuiSameChain) {
+        // SUI same-chain: direct fill via order_book.move
+        if (!order.suiSameChainMeta) {
+          toast.error('Missing SUI order metadata');
+          return;
+        }
+        const pairConfig = SUI_PAIR_CONFIGS.find(
+          (p) => p.pairId === order.suiSameChainMeta!.pairId
+        );
+        if (!pairConfig) {
+          toast.error('Unknown SUI trading pair');
+          return;
+        }
+        await fillSuiSameChainHook.fillOrder({
+          orderId: Number(order.id),
+          orderObjectId: order.suiSameChainMeta.orderObjectId,
+          creator: order.creator,
+          sellAmount: order.sellAmount,
+          buyAmount: order.buyAmount,
+          status: 'Active',
+          pairConfig,
+        });
+        toast.success('Order filled successfully!');
+        onClose();
+      } else if (isSameChain) {
         // Execute same-chain order
         await sameChainHook.executeOrder({
           orderId: order.id,
@@ -499,8 +529,8 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
           onClick={handleAction}
           loading={isPending || isConfirming || !!(sameChainHook.txHash || crossChainHook.hash)}
           disabled={
-            (isSuiTarget ? !suiAccount : !address) ||
-            (!isSameChain && !isTargetWalletValid) ||
+            (isSuiSameChain ? !suiAccount : isSuiTarget ? !suiAccount : !address) ||
+            (!isSuiSameChain && !isSameChain && !isTargetWalletValid) ||
             !!(sameChainHook.txHash || crossChainHook.hash)
           }
         >
@@ -512,7 +542,9 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
                 ? 'Confirm in wallet...'
                 : isConfirming
                   ? 'Confirming...'
-                  : isSameChain
+                  : isSuiSameChain
+                    ? 'Fill Order'
+                    : isSameChain
                     ? 'Execute Order'
                     : isSuiSwap
                       ? 'Create HTLC & Match'

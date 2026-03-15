@@ -36,6 +36,9 @@ export const contractAddresses = {
     // Test tokens (full type names for SUI)
     testTokenA: '0x0e1c4290fd26aa735b593afac46f28fc69e8558937c148b9ec0d67429af7fc96::test_token_a::TEST_TOKEN_A' as const,
     testTokenB: '0x0e1c4290fd26aa735b593afac46f28fc69e8558937c148b9ec0d67429af7fc96::test_token_b::TEST_TOKEN_B' as const,
+    // Same-chain OrderBookPair shared objects
+    orderBookPairTKATKB: '0xdf19c18b4fc74ee7f4d2a407cb6e3ad4758332e2d46c6be3c33796e2aa7dd797' as const,
+    orderBookPairTKBTKA: '0x8079033f69fe176c0e04f0cfc3da841c67dda803a38f7f71c3a8fb318047e876' as const,
   },
 } as const;
 

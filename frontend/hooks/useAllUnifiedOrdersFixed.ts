@@ -6,6 +6,13 @@ import { getTokenByAddress } from '@/lib/constants/tokens';
 import { formatUnits } from 'viem';
 import { sepolia, polygonAmoy } from 'wagmi/chains';
 
+export interface SuiSameChainMeta {
+  orderObjectId: string;
+  coinAType: string;
+  coinBType: string;
+  pairId: string;
+}
+
 export interface UnifiedOrder extends CrossChainOrder {
   price: number;       // buyAmount / sellAmount ratio
   inversePrice: number; // sellAmount / buyAmount ratio
@@ -16,6 +23,8 @@ export interface UnifiedOrder extends CrossChainOrder {
   // Actual chain IDs as numbers (EVM) or strings (SUI)
   sourceChainIdNum: number | string;
   targetChainIdNum: number | string;
+  // Present only for SUI same-chain orders
+  suiSameChainMeta?: SuiSameChainMeta;
 }
 
 /**

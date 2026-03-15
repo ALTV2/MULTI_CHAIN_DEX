@@ -9,6 +9,7 @@ import { getContractAddress, getSupportedChainIds, getChainConfig } from '@/lib/
 import { getTokenByAddress } from '@/lib/constants/tokens';
 import { ORDER_STATUS } from '@/lib/constants/swap';
 import { useSuiOrders } from './useSuiOrders';
+import { useSuiSameChainOrders } from './useSuiSameChainOrders';
 import { formatAmount } from '@/lib/utils/formatAmount';
 
 export interface LiveOrder {
@@ -159,10 +160,37 @@ export function useLiveOrderFeed() {
     staleTime: 10000,
   });
 
-  // Fetch SUI orders (no targetChainId filter - get all)
+  // Fetch SUI cross-chain orders (no targetChainId filter - get all)
   const { orders: suiOrders, isLoading: isSuiLoading } = useSuiOrders();
 
-  // Convert SUI orders to LiveOrder format
+  // Fetch SUI same-chain orders (order_book.move)
+  const { orders: suiSameChainOrders, isLoading: isSuiSameChainLoading } = useSuiSameChainOrders();
+
+  // Convert SUI same-chain orders to LiveOrder format
+  const suiSameChainLiveOrders: LiveOrder[] = suiSameChainOrders
+    .filter((o) => o.status === 'Active')
+    .map((o) => {
+      const SUI_DECIMALS = 9;
+      const sellSymbol = getTokenByAddress('sui:testnet', o.pairConfig.coinAType)?.symbol
+        || o.pairConfig.coinAType.split('::').pop() || 'Unknown';
+      const buySymbol = getTokenByAddress('sui:testnet', o.pairConfig.coinBType)?.symbol
+        || o.pairConfig.coinBType.split('::').pop() || 'Unknown';
+      return {
+        id: `sui-sc-${o.orderId}`,
+        sourceChainId: 'sui:testnet',
+        targetChainId: 'sui:testnet',
+        creator: o.creator,
+        sellToken: o.pairConfig.coinAType,
+        sellSymbol,
+        sellAmount: (Number(o.sellAmount) / Math.pow(10, SUI_DECIMALS)).toString(),
+        buyToken: o.pairConfig.coinBType,
+        buySymbol,
+        buyAmount: (Number(o.buyAmount) / Math.pow(10, SUI_DECIMALS)).toString(),
+        expiresAt: Math.floor(Date.now() / 1000) + 86400,
+      };
+    });
+
+  // Convert SUI cross-chain orders to LiveOrder format
   const suiLiveOrders: LiveOrder[] = suiOrders
     .filter((order) => order.status === 'Active') // Only active orders
     .map((order) => {
@@ -192,8 +220,8 @@ export function useLiveOrderFeed() {
       };
     });
 
-  // Merge EVM and SUI orders
-  const allOrders = [...(evmQuery.data || []), ...suiLiveOrders];
+  // Merge EVM, SUI cross-chain, and SUI same-chain orders
+  const allOrders = [...(evmQuery.data || []), ...suiLiveOrders, ...suiSameChainLiveOrders];
 
   // Sort by expiry (most recent first) and return top 20
   const sortedOrders = allOrders
@@ -202,7 +230,7 @@ export function useLiveOrderFeed() {
 
   return {
     data: sortedOrders,
-    isLoading: evmQuery.isLoading || isSuiLoading,
+    isLoading: evmQuery.isLoading || isSuiLoading || isSuiSameChainLoading,
     error: evmQuery.error,
     refetch: evmQuery.refetch,
   };

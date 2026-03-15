@@ -13,6 +13,7 @@ import type { ActiveSwap, SwapPhase } from '@/types/swap';
 import { useActiveSwaps } from './useActiveSwaps';
 import { useSuiUserOrders } from './useSuiUserOrders';
 import { useMyeCrossChainOrders } from './useCrossChainOrders';
+import { useSuiSameChainOrders } from './useSuiSameChainOrders';
 import type { SuiOrder } from './useSuiOrders';
 
 interface SameChainOrder {
@@ -103,8 +104,11 @@ export function useAllUserOrders() {
   const [isSameChainLoading, setIsSameChainLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(0);
 
-  // Fetch SUI orders for current SUI wallet
+  // Fetch SUI CCOB orders for current SUI wallet
   const { orders: suiOrders, isLoading: isSuiLoading } = useSuiUserOrders();
+
+  // Fetch SUI same-chain orders (order_book.move)
+  const { orders: suiSameChainRaw, isLoading: isSuiSameChainLoading } = useSuiSameChainOrders();
 
   // Fetch cross-chain orders from both EVM chains via React Query (with retry logic)
   const { orders: sepoliaOrders, isLoading: isSepoliaLoading, refetch: refetchSepolia } = useMyeCrossChainOrders(sepolia.id);
@@ -257,12 +261,52 @@ export function useAllUserOrders() {
       });
   }, [crossChainSwaps, sepoliaOrders, polygonOrders]);
 
+  // Convert SUI same-chain orders (order_book.move) to ActiveSwap format
+  const suiSameChainAsSwaps = useMemo<ActiveSwap[]>(() => {
+    if (!suiAccount?.address) return [];
+    const userAddr = suiAccount.address.toLowerCase();
+
+    return suiSameChainRaw
+      .filter((o) => o.creator.toLowerCase() === userAddr)
+      .map((o) => {
+        let phase: SwapPhase = 'order_created';
+        let orderStatus = 'Active';
+
+        if (o.status === 'Filled') {
+          phase = 'completed';
+          orderStatus = 'Completed';
+        } else if (o.status === 'Cancelled') {
+          phase = 'refunded';
+          orderStatus = 'Cancelled';
+        }
+
+        return {
+          meta: {
+            orderId: `sui-sc-${o.orderId}`,
+            role: 'creator' as const,
+            sourceChainId: 'sui:testnet',
+            targetChainId: 'sui:testnet',
+            hashlock: '',
+            sellToken: o.pairConfig.coinAType,
+            sellAmount: o.sellAmount.toString(),
+            buyToken: o.pairConfig.coinBType,
+            buyAmount: o.buyAmount.toString(),
+            creator: o.creator,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          },
+          phase,
+          orderStatus,
+        };
+      });
+  }, [suiSameChainRaw, suiAccount?.address]);
+
   // Merge cross-chain, same-chain, and SUI orders
   const allSwaps = useMemo(() => {
-    const merged = [...crossChainSwaps, ...crossChainDirectAsSwaps, ...sameChainAsSwaps, ...suiOrdersAsSwaps];
+    const merged = [...crossChainSwaps, ...crossChainDirectAsSwaps, ...sameChainAsSwaps, ...suiOrdersAsSwaps, ...suiSameChainAsSwaps];
     console.log('[DEBUG useAllUserOrders] allSwaps:', merged.length, merged.map(s => `${s.meta.sourceChainId}-${s.meta.orderId} phase=${s.phase} status=${s.orderStatus} creator=${s.meta.creator}`));
     return merged;
-  }, [crossChainSwaps, crossChainDirectAsSwaps, sameChainAsSwaps, suiOrdersAsSwaps]);
+  }, [crossChainSwaps, crossChainDirectAsSwaps, sameChainAsSwaps, suiOrdersAsSwaps, suiSameChainAsSwaps]);
 
   const activeSwaps = useMemo(
     () => {
@@ -310,7 +354,7 @@ export function useAllUserOrders() {
     [allSwaps]
   );
 
-  const isLoading = isCrossChainLoading || isSameChainLoading || isSuiLoading || isSepoliaLoading || isPolygonLoading;
+  const isLoading = isCrossChainLoading || isSameChainLoading || isSuiLoading || isSuiSameChainLoading || isSepoliaLoading || isPolygonLoading;
 
   return {
     swaps: allSwaps,

@@ -350,7 +350,7 @@ function SettingsPanel({
   hasEvm: boolean;
   hasSui: boolean;
 }) {
-  const { secretStorage, setSecretStorage, defaultTargetWallets } = useSettingsStore();
+  const { secretStorage, setSecretStorage, autoUpdate, setAutoUpdate, defaultTargetWallets } = useSettingsStore();
   const { t } = useTranslation();
 
   const secretOptions: { value: SecretStorageMode; label: string; desc: string }[] = [
@@ -361,6 +361,29 @@ function SettingsPanel({
 
   return (
     <div className="max-w-2xl space-y-6">
+      {/* Auto-Update */}
+      <Card>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Auto-Update</h3>
+              <p className="text-sm text-gray-500 mt-1">
+                Automatically refresh blockchain data every 30 seconds. When disabled, use the Refresh button to update manually. Disabling reduces RPC requests to Alchemy.
+              </p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoUpdate}
+                onChange={(e) => setAutoUpdate(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-gray-300 dark:bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent-blue"></div>
+            </label>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Secret Storage */}
       <Card>
         <CardContent className="space-y-4">

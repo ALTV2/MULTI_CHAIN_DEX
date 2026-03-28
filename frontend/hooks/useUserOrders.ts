@@ -1,11 +1,10 @@
 'use client';
 
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import {
   useAccount,
   usePublicClient,
   useChainId,
-  useWatchContractEvent,
 } from 'wagmi';
 import { orderBookABI } from '@/lib/contracts/abis/OrderBook';
 import { getContractAddress } from '@/lib/contracts/addresses';
@@ -17,7 +16,6 @@ export function useUserOrders() {
   const { address: userAddress } = useAccount();
   const publicClient = usePublicClient();
   const chainId = useChainId();
-  const queryClient = useQueryClient();
 
   const orderBookAddress = getContractAddress(chainId, 'orderBook') as `0x${string}`;
 
@@ -82,44 +80,11 @@ export function useUserOrders() {
       // Sort by newest first
       return orders.sort((a, b) => Number(b.id - a.id));
     },
-    enabled: !!publicClient && !!userAddress,
-    refetchInterval: 30000,
-    staleTime: 10000,
+    enabled: false, // Lazy — only fetch on manual refetch()
+    staleTime: 30_000,
   });
 
-  // Watch for order events
-  useWatchContractEvent({
-    address: orderBookAddress,
-    abi: orderBookABI,
-    eventName: 'OrderCreated',
-    onLogs: () => {
-      queryClient.invalidateQueries({
-        queryKey: ['userOrders', chainId, userAddress],
-      });
-    },
-  });
-
-  useWatchContractEvent({
-    address: orderBookAddress,
-    abi: orderBookABI,
-    eventName: 'OrderCancelled',
-    onLogs: () => {
-      queryClient.invalidateQueries({
-        queryKey: ['userOrders', chainId, userAddress],
-      });
-    },
-  });
-
-  useWatchContractEvent({
-    address: orderBookAddress,
-    abi: orderBookABI,
-    eventName: 'OrderExecuted',
-    onLogs: () => {
-      queryClient.invalidateQueries({
-        queryKey: ['userOrders', chainId, userAddress],
-      });
-    },
-  });
+  // Event watchers removed — use manual refresh to reduce RPC load
 
   return {
     orders: query.data || [],

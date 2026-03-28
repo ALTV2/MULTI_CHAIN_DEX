@@ -80,11 +80,13 @@ export function getContractAddress(
 ): string {
   const addresses = contractAddresses[chainId as SupportedChainId];
   if (!addresses) {
-    throw new Error(`Chain ${chainId} not supported`);
+    console.warn(`[getContractAddress] Chain ${chainId} not supported, returning zero address`);
+    return '0x0000000000000000000000000000000000000000';
   }
   const address = (addresses as any)[contract];
   if (!address) {
-    throw new Error(`Contract ${contract} not deployed on chain ${chainId}`);
+    console.warn(`[getContractAddress] Contract ${contract} not deployed on chain ${chainId}`);
+    return '0x0000000000000000000000000000000000000000';
   }
   return address;
 }
@@ -99,6 +101,25 @@ export function getChainConfig(chainId: number | string) {
 
 export function getSupportedChainIds(): SupportedChainId[] {
   return Object.keys(contractAddresses) as SupportedChainId[];
+}
+
+/**
+ * Numeric chain ID used to represent SUI in EVM contracts (CCOB stores targetChainId as uint256).
+ * Registered via addSupportedChain(101) on both Sepolia and Polygon Amoy CCOBs.
+ */
+export const SUI_NUMERIC_CHAIN_ID = 101;
+
+/** Convert internal chain ID (string for SUI, number for EVM) to numeric for EVM contracts. */
+export function toNumericChainId(chainId: number | string): number {
+  if (typeof chainId === 'string' && chainId.startsWith('sui:')) return SUI_NUMERIC_CHAIN_ID;
+  return Number(chainId);
+}
+
+/** Convert numeric chain ID from EVM contract back to internal format. */
+export function fromNumericChainId(numericId: number): number | string {
+  if (numericId === SUI_NUMERIC_CHAIN_ID) return 'sui:testnet';
+  if (numericId === 0) return 'sui:testnet'; // SUI uses 0 as self-reference for same-chain
+  return numericId;
 }
 
 export function getExplorerTxUrl(chainId: number | string, txHash: string): string {

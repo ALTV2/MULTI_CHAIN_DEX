@@ -1,5 +1,5 @@
 import { sepolia, polygonAmoy } from 'wagmi/chains';
-import { zeroAddress } from 'viem';
+import { keccak256, toHex, zeroAddress } from 'viem';
 import type { Token } from '@/types/token';
 
 export const tokensByChain: Record<number | string, Token[]> = {
@@ -201,6 +201,28 @@ export function getTokenBySymbol(
   return tokens.find(
     (token) => token.symbol.toLowerCase() === symbol.toLowerCase()
   );
+}
+
+/**
+ * Convert a SUI token type string to a deterministic 20-byte EVM placeholder address.
+ * Used when storing SUI token references in EVM CCOB contracts (which expect `address`).
+ */
+export function suiTokenToEvmPlaceholder(suiTokenType: string): `0x${string}` {
+  const hash = keccak256(toHex(suiTokenType));
+  return `0x${hash.slice(2, 42)}` as `0x${string}`; // first 20 bytes
+}
+
+/**
+ * Reverse lookup: given an EVM placeholder address, find the original SUI token type.
+ */
+const _suiPlaceholderMap: Record<string, string> = {};
+for (const token of tokensByChain['sui:testnet'] || []) {
+  const placeholder = suiTokenToEvmPlaceholder(token.address);
+  _suiPlaceholderMap[placeholder.toLowerCase()] = token.address;
+}
+
+export function evmPlaceholderToSuiToken(evmAddress: string): string | undefined {
+  return _suiPlaceholderMap[evmAddress.toLowerCase()];
 }
 
 export function isNativeToken(chainId: number | string, address: string): boolean {

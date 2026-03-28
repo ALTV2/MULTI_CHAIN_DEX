@@ -32,8 +32,11 @@ export interface SuiOrder {
   buyToken: string;
   buyAmount: bigint;
   targetChainId: number;
+  targetAddress: string; // Creator's address on target chain (EVM address for SUI→EVM orders)
   expiresAt: bigint;
   status: 'Active' | 'Matched' | 'Completed' | 'Cancelled' | 'Expired';
+  matchedBy?: string;          // Matcher's SUI address (set after match)
+  matcherHtlcSwapId?: string;  // EVM HTLC swap ID bytes32 as 0x hex (set after match)
 }
 
 const STATUS_MAP: Record<number, SuiOrder['status']> = {
@@ -55,6 +58,26 @@ function parseSuiOrder(rawFields: unknown): SuiOrder | null {
 
     const statusNum = parseInt(String(fields.status ?? '0'), 10);
 
+    // target_address is stored as a SUI address (32 bytes, 64 hex chars).
+    // If the creator stored an EVM address (20 bytes), SUI pads it with 12 leading zero-bytes:
+    // "0x000000000000000000000000{40-hex-EVM-address}".
+    // Detect this pattern and extract the actual EVM address.
+    const rawTargetAddress = String(fields.target_address ?? '');
+    let targetAddress = rawTargetAddress;
+    if (/^0x0{24}[0-9a-fA-F]{40}$/.test(rawTargetAddress)) {
+      // Left-padded EVM address — extract last 40 hex chars
+      targetAddress = '0x' + rawTargetAddress.slice(-40);
+    }
+
+    // Parse matched_by (matcher's SUI address)
+    const matchedBy = String(fields.matched_by ?? '');
+
+    // Parse htlc_swap_id (32-byte vector<u8> → 0x-prefixed hex string)
+    const rawHtlcSwapId: number[] = Array.from(fields.htlc_swap_id ?? []);
+    const matcherHtlcSwapId = rawHtlcSwapId.length === 32
+      ? '0x' + rawHtlcSwapId.map((b) => (b as number).toString(16).padStart(2, '0')).join('')
+      : undefined;
+
     return {
       id: String(fields.id ?? ''),
       creator: String(fields.creator ?? ''),
@@ -63,8 +86,11 @@ function parseSuiOrder(rawFields: unknown): SuiOrder | null {
       buyToken: new TextDecoder().decode(new Uint8Array(fields.buy_token ?? [])),
       buyAmount: BigInt(fields.buy_amount ?? 0),
       targetChainId: parseInt(String(fields.target_chain_id ?? '0'), 10),
+      targetAddress,
       expiresAt: BigInt(fields.expires_at ?? 0),
       status: STATUS_MAP[statusNum] ?? 'Cancelled',
+      matchedBy: matchedBy && matchedBy !== '0x0000000000000000000000000000000000000000000000000000000000000000' ? matchedBy : undefined,
+      matcherHtlcSwapId,
     };
   } catch {
     return null;
@@ -305,11 +331,10 @@ export function useSuiOrders(targetChainId?: number) {
       }
     };
 
-    load();
-    const interval = setInterval(load, 10_000);
+    // Only fetch on manual trigger (refetchTrigger > 0), not on mount
+    if (refetchTrigger > 0) load();
     return () => {
       isMounted = false;
-      clearInterval(interval);
     };
   }, [client, targetChainId, refetchTrigger]);
 

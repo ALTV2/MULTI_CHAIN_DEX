@@ -221,12 +221,8 @@ function SuiBalance({ address }: { address: string }) {
 
     fetchBalance();
 
-    // Poll every 10 seconds
-    const interval = setInterval(fetchBalance, 10000);
-
     return () => {
       isMounted = false;
-      clearInterval(interval);
     };
   }, [client, address]);
 

@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import { useAllUnifiedOrdersFixed, type UnifiedOrder } from './useAllUnifiedOrdersFixed';
 import { useAllSameChainOrdersFixed } from './useAllSameChainOrdersFixed';
 import { useSuiOrders } from './useSuiOrders';
-import { useSuiSameChainOrders, SUI_TKA_TYPE, SUI_TKB_TYPE } from './useSuiSameChainOrders';
+import { useSuiSameChainOrders } from './useSuiSameChainOrders';
 import { getTokenByAddress } from '@/lib/constants/tokens';
 
 /**
@@ -27,9 +27,8 @@ export function useAllOrders(params: {
   // Fetch ALL same-chain orders (no filtering by address) - Fixed version with static hooks
   const { orders: sameChainOrders, isLoading: isSameChainLoading } = useAllSameChainOrdersFixed();
 
-  // Fetch SUI cross-chain orders (SUI → EVM)
-  const targetChainNum = typeof targetChainId === 'number' ? targetChainId : undefined;
-  const { orders: suiOrders, isLoading: isSuiLoading, refetch: refetchSuiOrders } = useSuiOrders(targetChainNum);
+  // Fetch ALL SUI cross-chain orders (no pre-filter by target chain — let client-side filter handle it)
+  const { orders: suiOrders, isLoading: isSuiLoading, refetch: refetchSuiOrders } = useSuiOrders();
 
   // Fetch SUI same-chain orders (SUI → SUI)
   const { orders: suiSameChainOrders, isLoading: isSuiSameChainLoading } = useSuiSameChainOrders();
@@ -60,18 +59,18 @@ export function useAllOrders(params: {
     const convertedSuiOrders: UnifiedOrder[] = suiOrders.map((suiOrder) => {
       // Parse token symbols - handles both SUI addresses and EVM addresses
       const parseTokenSymbol = (tokenAddr: string, chainId: number | string): string => {
-        // SUI-style address: "0x2::sui::SUI" or "0xPACKAGE::module::TOKEN"
-        if (tokenAddr.includes('::')) {
-          const parts = tokenAddr.split('::');
-          if (parts.length === 3) {
-            return parts[2].toUpperCase(); // Return last part (e.g., "SUI")
-          }
-        }
-
-        // EVM-style address: lookup in token registry
+        // Always check token registry first — covers SUI Move types AND EVM addresses
         const token = getTokenByAddress(chainId, tokenAddr);
         if (token) {
           return token.symbol;
+        }
+
+        // Fallback: SUI-style type string "0xPACKAGE::module::TYPE" not in registry
+        if (tokenAddr.includes('::')) {
+          const parts = tokenAddr.split('::');
+          if (parts.length === 3) {
+            return parts[2].toUpperCase();
+          }
         }
 
         console.warn('⚠️ Unknown token:', tokenAddr, 'on chain', chainId);
@@ -100,7 +99,7 @@ export function useAllOrders(params: {
         buyToken: suiOrder.buyToken as `0x${string}`,
         buyAmount: suiOrder.buyAmount,
         targetChainId: BigInt(typeof actualTargetChainId === 'string' ? 0 : actualTargetChainId),
-        targetAddress: suiOrder.creator as `0x${string}`,
+        targetAddress: suiOrder.targetAddress as `0x${string}`,
         minTimelock: BigInt(3600),
         expiresAt: suiOrder.expiresAt,
         status: suiOrder.status as any,

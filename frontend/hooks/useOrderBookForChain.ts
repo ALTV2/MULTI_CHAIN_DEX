@@ -9,14 +9,15 @@ import { OrderStatus } from '@/types/order';
 import type { Order } from '@/types/order';
 
 /**
- * Fetch orders from a specific chain's OrderBook contract
+ * Fetch orders from a specific chain's OrderBook contract.
+ * Lazy by default — call refetch() to load.
  */
 export function useOrderBookForChain(chainId: number) {
   const orderBookAddress = getContractAddress(chainId, 'orderBook') as `0x${string}`;
 
   const query = useQuery({
     queryKey: ['orderBook', chainId],
-    networkMode: 'offlineFirst', // Don't cancel based on network status
+    networkMode: 'offlineFirst',
     queryFn: async (): Promise<Order[]> => {
       const client = getPublicClient(chainId);
 
@@ -30,7 +31,6 @@ export function useOrderBookForChain(chainId: number) {
 
       const orders: Order[] = [];
 
-      // Fetch all orders
       for (let i = 1n; i <= orderCounter; i++) {
         try {
           const order = await client.readContract({
@@ -40,7 +40,6 @@ export function useOrderBookForChain(chainId: number) {
             args: [i],
           }) as any;
 
-          // Only include active orders
           if (order.status === ORDER_STATUS.ACTIVE) {
             orders.push({
               id: order.id,
@@ -59,19 +58,19 @@ export function useOrderBookForChain(chainId: number) {
 
       return orders;
     },
-    refetchInterval: 15000, // Auto-refresh every 15 seconds (was 30s)
-    refetchOnMount: true, // Refetch on mount to get latest orders
-    refetchOnWindowFocus: true, // Refetch when user returns to tab
-    refetchOnReconnect: false, // Don't refetch on network reconnect
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     staleTime: ORDER_BOOK_STALE_MS,
-    gcTime: 5 * 60 * 1000, // Keep cache for 5 minutes even when unmounted
-    enabled: true, // Always enabled, don't cancel based on wallet chain
+    gcTime: 5 * 60 * 1000,
+    enabled: false, // Lazy — only fetch on manual refetch()
   });
 
   return {
     orders: query.data || [],
-    isLoading: query.isLoading,
+    isLoading: query.isLoading || query.isFetching,
     isError: query.isError,
     error: query.error,
+    refetch: query.refetch,
   };
 }

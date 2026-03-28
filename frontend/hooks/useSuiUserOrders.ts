@@ -21,6 +21,21 @@ function parseSuiOrder(rawFields: unknown): SuiOrder | null {
 
     const statusNum = parseInt(String(fields.status ?? '0'), 10);
 
+    const rawTargetAddress = String(fields.target_address ?? '');
+    let targetAddress = rawTargetAddress;
+    if (/^0x0{24}[0-9a-fA-F]{40}$/.test(rawTargetAddress)) {
+      targetAddress = '0x' + rawTargetAddress.slice(-40);
+    }
+
+    // Parse matched_by (matcher's SUI address)
+    const matchedBy = String(fields.matched_by ?? '');
+
+    // Parse htlc_swap_id (32-byte vector<u8> → 0x-prefixed hex string)
+    const rawHtlcSwapId: number[] = Array.from(fields.htlc_swap_id ?? []);
+    const matcherHtlcSwapId = rawHtlcSwapId.length === 32
+      ? '0x' + rawHtlcSwapId.map((b) => (b as number).toString(16).padStart(2, '0')).join('')
+      : undefined;
+
     return {
       id: String(fields.id ?? ''),
       creator: String(fields.creator ?? ''),
@@ -29,8 +44,11 @@ function parseSuiOrder(rawFields: unknown): SuiOrder | null {
       buyToken: new TextDecoder().decode(new Uint8Array(fields.buy_token ?? [])),
       buyAmount: BigInt(fields.buy_amount ?? 0),
       targetChainId: parseInt(String(fields.target_chain_id ?? '0'), 10),
+      targetAddress,
       expiresAt: BigInt(fields.expires_at ?? 0),
       status: STATUS_MAP[statusNum] ?? 'Cancelled',
+      matchedBy: matchedBy && matchedBy !== '0x0000000000000000000000000000000000000000000000000000000000000000' ? matchedBy : undefined,
+      matcherHtlcSwapId,
     };
   } catch {
     return null;
@@ -38,19 +56,23 @@ function parseSuiOrder(rawFields: unknown): SuiOrder | null {
 }
 
 /**
- * Hook to fetch orders created by the current SUI wallet.
+ * Hook to fetch SUI CCOB orders relevant to the current SUI wallet:
+ * - creatorOrders: orders created by this wallet
+ * - matcherOrders: Matched orders where matched_by = this wallet
  * Polls every 10 seconds.
  */
 export function useSuiUserOrders() {
   const suiAccount = useCurrentAccount();
   const client = useSuiClient();
-  const [orders, setOrders] = useState<SuiOrder[]>([]);
+  const [creatorOrders, setCreatorOrders] = useState<SuiOrder[]>([]);
+  const [matcherOrders, setMatcherOrders] = useState<SuiOrder[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!suiAccount?.address) {
-      setOrders([]);
+      setCreatorOrders([]);
+      setMatcherOrders([]);
       return;
     }
 
@@ -76,7 +98,7 @@ export function useSuiUserOrders() {
 
         const dynamicFields = await client.getDynamicFields({ parentId: tableId });
         if (!dynamicFields.data?.length) {
-          if (isMounted) setOrders([]);
+          if (isMounted) { setCreatorOrders([]); setMatcherOrders([]); }
           return;
         }
 
@@ -89,19 +111,28 @@ export function useSuiUserOrders() {
           )
         );
 
-        const userOrders: SuiOrder[] = [];
+        const myCreatorOrders: SuiOrder[] = [];
+        const myMatcherOrders: SuiOrder[] = [];
+
         for (const result of results) {
           if (result.status !== 'fulfilled') continue;
           const fieldObj = result.value;
           if (!fieldObj.data?.content || !('fields' in fieldObj.data.content)) continue;
 
           const parsed = parseSuiOrder(fieldObj.data.content.fields);
-          if (parsed && parsed.creator.toLowerCase() === userAddress) {
-            userOrders.push(parsed);
+          if (!parsed) continue;
+
+          if (parsed.creator.toLowerCase() === userAddress) {
+            myCreatorOrders.push(parsed);
+          } else if (parsed.matchedBy?.toLowerCase() === userAddress) {
+            myMatcherOrders.push(parsed);
           }
         }
 
-        if (isMounted) setOrders(userOrders);
+        if (isMounted) {
+          setCreatorOrders(myCreatorOrders);
+          setMatcherOrders(myMatcherOrders);
+        }
       } catch (err: any) {
         if (isMounted) setError(err?.message || 'Failed to fetch SUI user orders');
       } finally {
@@ -110,12 +141,11 @@ export function useSuiUserOrders() {
     };
 
     load();
-    const interval = setInterval(load, 10_000);
     return () => {
       isMounted = false;
-      clearInterval(interval);
     };
   }, [client, suiAccount?.address]);
 
-  return { orders, isLoading, error };
+  // Keep backward compat: `orders` = creator orders only
+  return { orders: creatorOrders, creatorOrders, matcherOrders, isLoading, error };
 }

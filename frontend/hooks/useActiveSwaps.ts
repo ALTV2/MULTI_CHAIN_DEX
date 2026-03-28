@@ -4,8 +4,8 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAccount } from 'wagmi';
 import { HTLC_ABI } from '@/lib/contracts/abis/HTLC';
 import { CROSS_CHAIN_ORDER_BOOK_ABI } from '@/lib/contracts/abis/CrossChainOrderBook';
-import { getContractAddress, getSupportedChainIds } from '@/lib/contracts/addresses';
-import { getSwaps, getSwap, saveSwap, updateSwap, cleanupAllFakeOrders } from '@/lib/utils/swapStorage';
+import { getContractAddress, getSupportedChainIds, fromNumericChainId } from '@/lib/contracts/addresses';
+import { getSwaps, getSwap, saveSwap, updateSwap, cleanupAllFakeOrders, clearAllSwaps } from '@/lib/utils/swapStorage';
 import { determineSwapPhase } from '@/lib/utils/swapPhase';
 import { getPublicClient } from '@/lib/utils/rpcClient';
 import type { StoredSwapMeta, ActiveSwap } from '@/types/swap';
@@ -73,7 +73,7 @@ async function scanBlockchainForSwaps(walletAddress: string): Promise<number> {
             orderId,
             role: 'creator',
             sourceChainId: chainIdNum,
-            targetChainId: Number(order.targetChainId),
+            targetChainId: fromNumericChainId(Number(order.targetChainId)),
             hashlock: '',
             sellToken: order.sellToken,
             sellAmount: order.sellAmount.toString(),
@@ -100,8 +100,8 @@ async function scanBlockchainForSwaps(walletAddress: string): Promise<number> {
         }) as bigint;
 
 
-        // Use <= because contract uses 1-based IDs (order IDs go from 1 to totalOrders)
-        for (let i = 0; i <= Number(totalOrders); i++) {
+        // Contract uses 1-based IDs (order IDs go from 1 to totalOrders)
+        for (let i = 1; i <= Number(totalOrders); i++) {
           try {
             const order = await client.readContract({
               address: ccobAddress,
@@ -129,7 +129,7 @@ async function scanBlockchainForSwaps(walletAddress: string): Promise<number> {
               orderId,
               role: 'matcher',
               sourceChainId: chainIdNum,
-              targetChainId: Number(order.targetChainId),
+              targetChainId: fromNumericChainId(Number(order.targetChainId)),
               hashlock: '',
               sellToken: order.sellToken,
               sellAmount: order.sellAmount.toString(),
@@ -240,13 +240,38 @@ async function discoverHTLCSwap(
 }
 
 async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string): Promise<ActiveSwap> {
-  // SUI chains are managed separately via useSuiHTLC/useSuiOrders hooks.
-  // Skip EVM-specific on-chain fetching for swaps involving SUI source chains.
+  // SUI source (SUI→EVM): the matcher's EVM HTLC can be queried on the EVM target chain.
+  // We no longer rely on localStorage flags for phase determination.
   const isSuiSource = typeof meta.sourceChainId === 'string' && meta.sourceChainId.startsWith('sui:');
   if (isSuiSource) {
+    let matcherHtlcStatus: string | undefined;
+    let matcherHtlcTimelock: bigint | undefined;
+
+    if (meta.matcherHtlcSwapId && typeof meta.targetChainId === 'number') {
+      try {
+        const evmClient = getPublicClient(meta.targetChainId);
+        const htlcAddress = getContractAddress(meta.targetChainId, 'htlc') as `0x${string}`;
+        const swapData = await evmClient.readContract({
+          address: htlcAddress,
+          abi: HTLC_ABI,
+          functionName: 'getSwap',
+          args: [meta.matcherHtlcSwapId as `0x${string}`],
+        }) as any;
+        matcherHtlcStatus = HTLC_STATUS_MAP[swapData.status] || 'Empty';
+        matcherHtlcTimelock = swapData.timelock as bigint;
+        // Sync hashlock from EVM HTLC so determineSwapPhase has it
+        if (swapData.hashlock && swapData.hashlock !== meta.hashlock) {
+          updateSwap(walletAddress, meta.orderId, { hashlock: swapData.hashlock }, meta.sourceChainId);
+          meta = { ...meta, hashlock: swapData.hashlock };
+        }
+      } catch (err) {
+        console.warn('[fetchSwapOnChainData] SUI source: failed to read EVM HTLC:', err);
+      }
+    }
+
     return {
       meta,
-      phase: determineSwapPhase({ meta }),
+      phase: determineSwapPhase({ meta, matcherHtlcStatus, matcherHtlcTimelock }),
     };
   }
 
@@ -355,7 +380,7 @@ async function fetchSwapOnChainData(meta: StoredSwapMeta, walletAddress: string)
       }
 
       // Fetch matcher HTLC status if we have the swap ID (and didn't already fetch via discovery)
-      if (meta.matcherHtlcSwapId && !matcherHtlcStatus) {
+      if (meta.matcherHtlcSwapId && !matcherHtlcStatus && targetClient) {
         try {
           const htlcAddress = getContractAddress(meta.targetChainId, 'htlc') as `0x${string}`;
           const swapData = await targetClient.readContract({
@@ -435,6 +460,18 @@ export function useActiveSwaps() {
   const lastScanTime = useRef(0);
   const forceNextScan = useRef(true); // Always scan on first mount
   const cleanupDone = useRef(false); // Track if we've run cleanup
+  const prevAddressRef = useRef<string | undefined>();
+
+  // Clear all swap storage when wallet changes so phase is re-derived from blockchain
+  useEffect(() => {
+    const lowerAddr = address?.toLowerCase();
+    if (prevAddressRef.current !== undefined && prevAddressRef.current !== lowerAddr) {
+      clearAllSwaps();
+      setSwaps([]);
+      forceNextScan.current = true;
+    }
+    prevAddressRef.current = lowerAddr;
+  }, [address]);
 
   const fetchAll = useCallback(async () => {
     if (!address) {
@@ -484,18 +521,13 @@ export function useActiveSwaps() {
     }
   }, [address]);
 
-  // Initial fetch and refresh
+  // Only fetch on manual refresh (lastRefresh > 0), not on mount
   useEffect(() => {
+    if (lastRefresh === 0) return;
     fetchAll();
   }, [fetchAll, lastRefresh]);
 
-  // Auto-refresh every 15 seconds
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setLastRefresh(Date.now());
-    }, AUTO_REFRESH_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, []);
+  // Auto-refresh disabled — use manual refresh button only
 
   const refetch = useCallback(() => {
     forceNextScan.current = true; // Force scan on manual refresh

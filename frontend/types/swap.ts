@@ -34,8 +34,19 @@ export interface StoredSwapMeta {
   targetAddress?: string;      // Matcher's cross-chain address for receiving funds
 
   // HTLC swap IDs (set as HTLCs are created)
-  creatorHtlcSwapId?: string;  // HTLC on source chain (creator locks sell tokens)
-  matcherHtlcSwapId?: string;  // HTLC on target chain (matcher locks buy tokens)
+  creatorHtlcSwapId?: string;  // HTLC on source chain (creator locks sell tokens) — bytes32 hex
+  matcherHtlcSwapId?: string;  // HTLC on target chain (matcher locks buy tokens) — bytes32 hex
+
+  // SUI HTLC shared object IDs (required for withdraw/refund on SUI — Move needs objectId, not swapId)
+  creatorHtlcObjectId?: string;  // SUI Move object ID for creator's HTLC (SUI source chains)
+  matcherHtlcObjectId?: string;  // SUI Move object ID for matcher's HTLC (SUI target chains)
+
+  // Cross-chain SUI addresses
+  creatorSuiAddress?: string;  // Creator's SUI address (for EVM→SUI: where creator receives SUI tokens)
+
+  // SUI withdrawal tracking (on-chain status not auto-fetched for SUI chains — use flags instead)
+  matcherHtlcWithdrawn?: boolean;  // EVM→SUI: creator withdrew from matcher's SUI HTLC; SUI→EVM: creator withdrew from matcher's EVM HTLC
+  creatorHtlcWithdrawn?: boolean;  // SUI→EVM: matcher withdrew from creator's SUI HTLC
 
   // Timestamps
   createdAt: number;

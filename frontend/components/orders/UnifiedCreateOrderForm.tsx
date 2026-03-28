@@ -12,8 +12,8 @@ import { Select, type SelectOption } from '@/components/ui/Select';
 import { TokenIcon } from '@/components/common/TokenIcon';
 import { Badge } from '@/components/ui/Badge';
 import { supportedChains } from '@/lib/contracts/config';
-import { chainConfig, SupportedChainId, getContractAddress, getSupportedChainIds } from '@/lib/contracts/addresses';
-import { getTokensByChainId, getTokenByAddress } from '@/lib/constants/tokens';
+import { chainConfig, SupportedChainId, getContractAddress, getSupportedChainIds, toNumericChainId } from '@/lib/contracts/addresses';
+import { getTokensByChainId, getTokenByAddress, suiTokenToEvmPlaceholder } from '@/lib/constants/tokens';
 import { useCreateCrossChainOrder } from '@/hooks/useCrossChainOrders';
 import { useCreateOrder } from '@/hooks/useCreateOrder';
 import { useTokenApproval } from '@/hooks/useTokenApproval';
@@ -62,6 +62,8 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
   const isSuiSource = typeof sourceChainId === 'string';
   const isSuiTarget = typeof targetChainId === 'string';
   const isSuiOrder = isSuiSource || isSuiTarget;
+  // SUI→EVM cross-chain requires BOTH wallets: SUI to create/lock, EVM as receiving address
+  const isSuiToEvm = isSuiSource && !isSuiTarget && isCrossChain;
 
   // Update source chain when wallet chain changes
   useEffect(() => {
@@ -119,12 +121,8 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
 
     fetchSuiBalance();
 
-    // Poll every 10 seconds
-    const interval = setInterval(fetchSuiBalance, 10000);
-
     return () => {
       isMounted = false;
-      clearInterval(interval);
     };
   }, [suiClient, suiAccount, sellToken, isSuiSource]);
 
@@ -188,6 +186,18 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
   useEffect(() => {
     setBuyToken(zeroAddress);
   }, [targetChainId]);
+
+  // Reset targetAddress when chain direction changes to avoid stale cross-chain addresses
+  useEffect(() => {
+    setTargetAddress('');
+  }, [sourceChainId, targetChainId]);
+
+  // Auto-fill target address from EVM wallet when doing SUI→EVM
+  useEffect(() => {
+    if (isSuiToEvm && address) {
+      setTargetAddress(address);
+    }
+  }, [address, isSuiToEvm]);
 
   // Handle cross-chain order success
   useEffect(() => {
@@ -258,8 +268,9 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
     }
 
     try {
-      // SUI Order Creation
-      if (isSuiOrder) {
+      // SUI Source Order Creation (SUI same-chain + SUI→EVM)
+      // EVM→SUI goes through the EVM path below with numeric chain ID 101
+      if (isSuiSource) {
         if (!suiAccount) {
           toast.error('Please connect your SUI wallet');
           return;
@@ -282,13 +293,7 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
           return;
         }
 
-        // EVM→SUI: order must be created from the SUI side
-        if (!isSuiSource && isSuiTarget) {
-          toast.error('To swap EVM→SUI, please select SUI as the source chain');
-          return;
-        }
-
-        // At this point: SUI→EVM only (isSuiSource=true, isSuiTarget=false)
+        // At this point: SUI→EVM or EVM→SUI cross-chain
         const targetChain = typeof targetChainId === 'number' ? targetChainId : null;
         if (targetChain === null) {
           toast.error('Invalid target chain for SUI order');
@@ -320,13 +325,21 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
         const parsedBuyAmount = parseUnits(buyAmount, CROSS_CHAIN_DECIMALS);
         const minTimelock = BigInt(3600); // 1 hour minimum
 
+        // For SUI→EVM cross-chain: targetAddress must be a valid EVM address (0x + 40 hex)
+        const trimmedTargetAddress = targetAddress.trim();
+        const isValidEvm = /^0x[a-fA-F0-9]{40}$/.test(trimmedTargetAddress);
+        if (!isValidEvm) {
+          toast.error('Enter your EVM receiving address (MetaMask) in the "Receive on" field');
+          return;
+        }
+
         await createSuiOrder({
           sellToken,
           sellAmount: parsedSellAmount,
           buyToken,
           buyAmount: parsedBuyAmount,
           targetChainId: targetChain,
-          targetAddress: targetAddress || suiAccount.address,
+          targetAddress: trimmedTargetAddress,
           minTimelock,
           expiresAt,
         });
@@ -358,13 +371,33 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
         const expiresAt = BigInt(Math.floor(Date.now() / 1000) + parseInt(expiryHours) * 3600);
         const minTimelock = BigInt(3600);
 
+        // For EVM→SUI: validate SUI receiving address
+        if (isSuiTarget) {
+          const trimmedAddr = targetAddress.trim();
+          if (!/^0x[a-fA-F0-9]{1,64}$/.test(trimmedAddr)) {
+            toast.error('Enter a valid SUI receiving address in the "Receive on" field');
+            return;
+          }
+        }
+
+        // For EVM→SUI: convert SUI chain ID to numeric (101) and buyToken to EVM placeholder
+        const numericTargetChainId = toNumericChainId(targetChainId);
+        const evmBuyToken = isSuiTarget
+          ? suiTokenToEvmPlaceholder(buyToken)
+          : (buyToken as `0x${string}`);
+        // For EVM→SUI: targetAddress is the SUI receiving address (longer than 20 bytes).
+        // Store last 20 bytes as EVM address — reconstructed by zero-padding on read.
+        const evmTargetAddress = isSuiTarget
+          ? (`0x${targetAddress.replace('0x', '').slice(-40).padStart(40, '0')}` as `0x${string}`)
+          : ((targetAddress || address) as `0x${string}`);
+
         await createCrossChainOrder({
           sellToken: sellToken as `0x${string}`,
           sellAmount: parseEther(sellAmount),
-          buyToken: buyToken as `0x${string}`,
+          buyToken: evmBuyToken,
           buyAmount: parseEther(buyAmount),
-          targetChainId: targetChainId as number,
-          targetAddress: (targetAddress || address) as `0x${string}`,
+          targetChainId: numericTargetChainId,
+          targetAddress: evmTargetAddress,
           minTimelock,
           expiresAt,
         });
@@ -405,9 +438,19 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
   // Validation: same token not allowed in same-chain
   const sameTokenError = !isCrossChain && sellToken === buyToken && sellToken !== zeroAddress;
 
-  // Check wallet connection based on chain type
-  const walletConnected = isSuiOrder ? !!suiAccount : isConnected;
-  const userAddress = isSuiOrder ? suiAccount?.address : address;
+  // EVM→SUI: need EVM wallet (source is EVM)
+  // SUI→EVM: need both wallets
+  // SUI→SUI: need SUI wallet
+  // EVM→EVM: need EVM wallet
+  const isEvmToSui = !isSuiSource && isSuiTarget && isCrossChain;
+  const walletConnected = isSuiToEvm
+    ? !!suiAccount && isConnected
+    : isEvmToSui
+    ? isConnected
+    : isSuiSource
+    ? !!suiAccount
+    : isConnected;
+  const userAddress = isSuiSource ? suiAccount?.address : address;
 
   const isFormValid = sellAmount && buyAmount && parseFloat(sellAmount) > 0 && parseFloat(buyAmount) > 0 && !sameTokenError && walletConnected;
   const isPending = isCrossChainPending || isSameChainCreating || isApproving || isSuiOrderPending || isSuiSameChainOrderPending;
@@ -560,10 +603,34 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
           </div>
         )}
 
-        {/* Info: SUI wallet required */}
-        {isSuiOrder && !suiAccount && (
+        {/* Info: EVM→SUI cross-chain order */}
+        {!isSuiSource && isSuiTarget && (
           <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 text-sm">
-            ℹ️ Please connect your SUI wallet to create orders on SUI network.
+            <div className="font-semibold">EVM → SUI Cross-Chain Order</div>
+            <div className="text-xs text-blue-300/80 mt-1">
+              Your EVM tokens will be locked in HTLC. Enter your SUI address below to receive SUI tokens.
+            </div>
+          </div>
+        )}
+
+        {/* Wallet connection status for SUI→EVM cross-chain */}
+        {isSuiToEvm && (
+          <div className="space-y-2">
+            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${suiAccount ? 'bg-green-500/10 border border-green-500/20 text-green-400' : 'bg-red-500/10 border border-red-500/20 text-red-400'}`}>
+              <span>{suiAccount ? '✅' : '❌'}</span>
+              <span>Slush (SUI) {suiAccount ? `— ${suiAccount.address.slice(0, 6)}…${suiAccount.address.slice(-4)}` : '— connect to create order'}</span>
+            </div>
+            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${isConnected ? 'bg-green-500/10 border border-green-500/20 text-green-400' : 'bg-red-500/10 border border-red-500/20 text-red-400'}`}>
+              <span>{isConnected ? '✅' : '❌'}</span>
+              <span>MetaMask {isConnected ? `— ${address?.slice(0, 6)}…${address?.slice(-4)}` : '— connect to set receiving address'}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Info: SUI wallet required (SUI source only, not EVM→SUI) */}
+        {isSuiSource && !isSuiToEvm && !suiAccount && (
+          <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 text-sm">
+            Please connect your SUI wallet to create orders on SUI network.
           </div>
         )}
 
@@ -590,9 +657,9 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
         {/* Submit Button */}
         {!walletConnected ? (
           <Button type="button" size="lg" className="w-full" disabled>
-            Connect {isSuiOrder ? 'SUI' : 'EVM'} Wallet
+            Connect {isSuiSource ? 'SUI' : 'EVM'} Wallet
           </Button>
-        ) : !isCrossChain && !isSuiOrder && needsApproval && !isApproved ? (
+        ) : !isCrossChain && !isSuiSource && needsApproval && !isApproved ? (
           <Button
             type="button"
             size="lg"

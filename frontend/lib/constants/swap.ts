@@ -32,10 +32,10 @@ export const ORDER_STATUS_MAP: Record<number, string> = {
 
 /** Polling intervals (ms) */
 export const SWAP_SCAN_COOLDOWN_MS = 30_000;
-export const AUTO_REFRESH_INTERVAL_MS = 15_000;
-export const ORDER_BOOK_REFETCH_MS = 30_000;
-export const ORDER_BOOK_STALE_MS = 10_000;
-export const SECRET_POLL_INTERVAL_MS = 15_000;
+export const AUTO_REFRESH_INTERVAL_MS = 30_000;
+export const ORDER_BOOK_REFETCH_MS = 60_000;
+export const ORDER_BOOK_STALE_MS = 30_000;
+export const SECRET_POLL_INTERVAL_MS = 30_000;
 
 /** Event log scan parameters */
 export const EVENT_LOG_CHUNK_SIZE = 10n;

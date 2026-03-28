@@ -94,6 +94,14 @@ export function getSecret(walletAddress: string, orderId: string, sourceChainId?
   return getSwap(walletAddress, orderId, sourceChainId)?.secret;
 }
 
+/** Clear all swap storage across all wallet addresses */
+export function clearAllSwaps(): void {
+  if (typeof window === 'undefined') return;
+  const keys = Object.keys(localStorage).filter((k) => k.startsWith(STORAGE_KEY_PREFIX));
+  keys.forEach((k) => localStorage.removeItem(k));
+  console.log(`🧹 Cleared all swap storage (${keys.length} wallets)`);
+}
+
 /**
  * Clean up all fake orders with timestamp IDs from ALL storage keys
  * This runs once to remove legacy fake orders

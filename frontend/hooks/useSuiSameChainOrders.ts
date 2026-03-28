@@ -139,7 +139,6 @@ export function useSuiSameChainOrders() {
           else console.error('[useSuiSameChainOrders] pair fetch failed:', r.reason);
         }
 
-        console.log('[useSuiSameChainOrders] fetched orders:', combined.length, combined);
         if (isMounted) setOrders(combined);
       } catch (err) {
         console.error('[useSuiSameChainOrders] fetch error:', err);
@@ -149,10 +148,8 @@ export function useSuiSameChainOrders() {
     };
 
     load();
-    const interval = setInterval(load, 10_000);
     return () => {
       isMounted = false;
-      clearInterval(interval);
     };
   }, [client, refetchTrigger]);
 

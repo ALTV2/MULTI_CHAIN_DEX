@@ -4,7 +4,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   usePublicClient,
   useChainId,
-  useWatchContractEvent,
 } from 'wagmi';
 import { orderBookABI } from '@/lib/contracts/abis/OrderBook';
 import { getContractAddress } from '@/lib/contracts/addresses';
@@ -81,39 +80,11 @@ export function useOrderBook() {
       // Sort by newest first (highest ID)
       return orders.sort((a, b) => Number(b.id - a.id));
     },
-    refetchInterval: ORDER_BOOK_REFETCH_MS,
     staleTime: ORDER_BOOK_STALE_MS,
+    enabled: false, // Lazy — only fetch on manual refetch()
   });
 
-  // Watch for new orders
-  useWatchContractEvent({
-    address: orderBookAddress,
-    abi: orderBookABI,
-    eventName: 'OrderCreated',
-    onLogs: () => {
-      queryClient.invalidateQueries({ queryKey: ['orderBook', chainId] });
-    },
-  });
-
-  // Watch for cancelled orders
-  useWatchContractEvent({
-    address: orderBookAddress,
-    abi: orderBookABI,
-    eventName: 'OrderCancelled',
-    onLogs: () => {
-      queryClient.invalidateQueries({ queryKey: ['orderBook', chainId] });
-    },
-  });
-
-  // Watch for executed orders
-  useWatchContractEvent({
-    address: orderBookAddress,
-    abi: orderBookABI,
-    eventName: 'OrderExecuted',
-    onLogs: () => {
-      queryClient.invalidateQueries({ queryKey: ['orderBook', chainId] });
-    },
-  });
+  // Event watchers removed — use manual refresh to reduce RPC load
 
   return {
     orders: query.data || [],

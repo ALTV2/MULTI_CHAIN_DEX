@@ -36,6 +36,15 @@ export function UnifiedWalletButton() {
     }
   }, [selectedType]);
 
+  // Auto-clear selectedType once the respective wallet connects
+  useEffect(() => {
+    if (isEvmConnected && selectedType === 'evm') setSelectedType(null);
+  }, [isEvmConnected, selectedType]);
+
+  useEffect(() => {
+    if (suiAccount && selectedType === 'sui') setSelectedType(null);
+  }, [suiAccount, selectedType]);
+
   // If a wallet type modal is open, show the respective connect button
   if (selectedType === 'evm') {
     return (
@@ -83,7 +92,7 @@ export function UnifiedWalletButton() {
   // If wallets are connected, show status
   if (isAnyConnected) {
     return (
-      <div className="flex items-center gap-2">
+      <div className="relative flex items-center gap-2">
         {/* EVM Wallet */}
         {isEvmConnected && (
           <div className="flex items-center gap-2 px-3 py-1.5 bg-light-hover dark:bg-dark-hover rounded-lg border border-light-border dark:border-dark-border">
@@ -128,14 +137,87 @@ export function UnifiedWalletButton() {
           </div>
         )}
 
-        {/* Add wallet button */}
-        <button
-          onClick={() => setIsOpen(true)}
-          className="px-3 py-1.5 text-sm font-medium text-accent-blue hover:text-accent-blue/80 transition-colors"
-          title="Add another wallet"
-        >
-          +
-        </button>
+        {/* Add wallet button — only shown when not both wallets connected */}
+        {(!isEvmConnected || !suiAccount) && (
+          <button
+            onClick={() => setIsOpen(!isOpen)}
+            className="px-3 py-1.5 text-sm font-medium text-accent-blue hover:text-accent-blue/80 transition-colors"
+            title="Add another wallet"
+          >
+            +
+          </button>
+        )}
+
+        {/* Dropdown for adding second wallet */}
+        {isOpen && (
+          <>
+            <div
+              className="fixed inset-0 z-[9998]"
+              onClick={() => setIsOpen(false)}
+            />
+            <div className="absolute right-0 top-full mt-2 z-[9999] w-80 bg-light-card dark:bg-dark-card rounded-xl border border-light-border dark:border-dark-border shadow-2xl animate-fade-in">
+              <div className="p-3 space-y-2">
+                {!isEvmConnected && (
+                  <button
+                    onClick={() => {
+                      setIsOpen(false);
+                      setSelectedType('evm');
+                    }}
+                    className={cn(
+                      'w-full p-4 rounded-lg border transition-all',
+                      'hover:border-accent-blue hover:bg-accent-blue/5',
+                      'border-light-border dark:border-dark-border',
+                      'bg-light-bg dark:bg-dark-bg'
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center flex-shrink-0">
+                        <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M11.944 17.97L4.58 13.62 11.943 24l7.37-10.38-7.372 4.35h.003zM12.056 0L4.69 12.223l7.365 4.354 7.365-4.35L12.056 0z" />
+                        </svg>
+                      </div>
+                      <div className="flex-1 text-left">
+                        <div className="font-medium text-gray-900 dark:text-white text-sm">EVM Wallets</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">MetaMask, WalletConnect</div>
+                      </div>
+                      <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </div>
+                  </button>
+                )}
+
+                {!suiAccount && (
+                  <button
+                    onClick={() => {
+                      setIsOpen(false);
+                      setSelectedType('sui');
+                    }}
+                    className={cn(
+                      'w-full p-4 rounded-lg border transition-all',
+                      'hover:border-accent-blue hover:bg-accent-blue/5',
+                      'border-light-border dark:border-dark-border',
+                      'bg-light-bg dark:bg-dark-bg'
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center flex-shrink-0">
+                        <img src="/chains/sui.svg" alt="SUI" className="w-7 h-7" />
+                      </div>
+                      <div className="flex-1 text-left">
+                        <div className="font-medium text-gray-900 dark:text-white text-sm">SUI Wallets</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">Sui Wallet, Suiet, Ethos</div>
+                      </div>
+                      <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </div>
+                  </button>
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </div>
     );
   }

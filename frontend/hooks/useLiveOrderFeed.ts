@@ -152,12 +152,12 @@ async function fetchAllActiveOrders(): Promise<LiveOrder[]> {
 }
 
 export function useLiveOrderFeed() {
-  // Fetch EVM orders
+  // Fetch EVM orders — lazy, only on manual refetch
   const evmQuery = useQuery({
     queryKey: ['liveOrderFeed', 'evm'],
     queryFn: fetchAllActiveOrders,
-    refetchInterval: 15000,
-    staleTime: 10000,
+    staleTime: 60_000,
+    enabled: false, // Don't auto-fetch — use refetch() manually
   });
 
   // Fetch SUI cross-chain orders (no targetChainId filter - get all)

@@ -73,13 +73,12 @@ export function useCrossChainOrdersForTarget(sourceChainId: number, targetChainI
       console.log(`📦 Raw orders fetched (${sourceChainId} → ${targetChainId}):`, data?.length || 0, data);
       return data || [];
     },
-    enabled: !!ccobAddress,
-    refetchOnMount: true, // Refetch on mount to get latest orders
-    refetchOnWindowFocus: true, // Refetch when user returns to tab
-    refetchOnReconnect: false, // Don't refetch on network reconnect
-    refetchInterval: 15000, // Auto-refresh every 15 seconds
-    gcTime: 5 * 60 * 1000, // Keep cache for 5 minutes even when unmounted
-    staleTime: 10000, // Consider data stale after 10s
+    enabled: false, // Lazy — only fetch on manual refetch()
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    gcTime: 5 * 60 * 1000,
+    staleTime: 30_000,
   });
 
   const orders = useMemo<CrossChainOrder[]>(() => {
@@ -118,12 +117,12 @@ export function useMyeCrossChainOrders(chainId: number) {
 
       return data || [];
     },
-    enabled: !!address && !!ccobAddress,
-    refetchOnMount: true, // Always refetch on mount to get latest orders
-    refetchOnWindowFocus: false, // Don't refetch on window focus
-    refetchOnReconnect: false, // Don't refetch on network reconnect
-    gcTime: 5 * 60 * 1000, // Keep cache for 5 minutes even when unmounted
-    staleTime: 10000, // Consider data stale after 10s
+    enabled: false, // Lazy — only fetch on manual refetch()
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    gcTime: 5 * 60 * 1000,
+    staleTime: 30_000,
   });
 
   const orders = useMemo<CrossChainOrder[]>(() => {

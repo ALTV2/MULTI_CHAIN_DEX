@@ -12,6 +12,7 @@ import {
   EVENT_LOG_CONCURRENCY,
   SECRET_POLL_INTERVAL_MS,
 } from '@/lib/constants/swap';
+import { useSettingsStore } from '@/stores/useSettingsStore';
 
 const SWAP_WITHDRAWN_EVENT = parseAbiItem(
   'event SwapWithdrawn(bytes32 indexed swapId, bytes32 secret, address indexed participant)'
@@ -81,6 +82,7 @@ export function useSwapSecretFromEvent(
   enabled: boolean = true
 ) {
   const [secret, setSecret] = useState<`0x${string}` | null>(null);
+  const autoUpdate = useSettingsStore((s) => s.autoUpdate);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isSearching = useRef(false);
@@ -135,9 +137,10 @@ export function useSwapSecretFromEvent(
 
     fetchSecret();
 
+    if (!autoUpdate) return;
     const interval = setInterval(fetchSecret, SECRET_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [fetchSecret, enabled, swapId, secret]);
+  }, [fetchSecret, enabled, swapId, secret, autoUpdate]);
 
   return {
     secret,

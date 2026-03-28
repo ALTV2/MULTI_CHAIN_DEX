@@ -25,9 +25,11 @@ export const config = createConfig({
   chains: [sepolia, polygonAmoy],
   connectors,
   transports: {
-    [sepolia.id]: http(sepoliaRpcUrl),
-    [polygonAmoy.id]: http(polygonAmoyRpcUrl),
+    [sepolia.id]: http(sepoliaRpcUrl, { batch: false }),
+    [polygonAmoy.id]: http(polygonAmoyRpcUrl, { batch: false }),
   },
+  batch: { multicall: false }, // Disable Multicall3 batching — we do manual fetches
+  pollingInterval: 120_000, // 2 minutes — reduce Alchemy RPC load (default was 4s)
   ssr: true,
 });
 

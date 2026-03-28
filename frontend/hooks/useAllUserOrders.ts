@@ -1,20 +1,28 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useAccount } from 'wagmi';
 import { sepolia, polygonAmoy } from 'wagmi/chains';
-import { useCurrentAccount } from '@mysten/dapp-kit';
+import { useCurrentAccount, useSuiClient } from '@mysten/dapp-kit';
 import { orderBookABI } from '@/lib/contracts/abis/OrderBook';
 import { getContractAddress, getSupportedChainIds } from '@/lib/contracts/addresses';
 import { getPublicClient } from '@/lib/utils/rpcClient';
-import { getTokenByAddress } from '@/lib/constants/tokens';
-import { ORDER_STATUS, ZERO_ADDRESS } from '@/lib/constants/swap';
+import { ORDER_STATUS, ZERO_ADDRESS, HTLC_STATUS_MAP } from '@/lib/constants/swap';
+import { fromNumericChainId } from '@/lib/contracts/addresses';
+import { HTLC_ABI } from '@/lib/contracts/abis/HTLC';
+import { clearAllSwaps } from '@/lib/utils/swapStorage';
 import type { ActiveSwap, SwapPhase } from '@/types/swap';
 import { useActiveSwaps } from './useActiveSwaps';
 import { useSuiUserOrders } from './useSuiUserOrders';
 import { useMyeCrossChainOrders } from './useCrossChainOrders';
 import { useSuiSameChainOrders } from './useSuiSameChainOrders';
-import type { SuiOrder } from './useSuiOrders';
+
+interface SuiOrderEnrichment {
+  phase: SwapPhase;
+  creatorHtlcObjectId?: string;
+  hashlock?: string;
+}
 
 interface SameChainOrder {
   id: bigint;
@@ -98,49 +106,261 @@ async function fetchUserSameChainOrders(walletAddress: string): Promise<SameChai
 export function useAllUserOrders() {
   const { address } = useAccount(); // EVM wallet
   const suiAccount = useCurrentAccount(); // SUI wallet
+  const suiClient = useSuiClient();
   const { swaps: crossChainSwaps, isLoading: isCrossChainLoading, refetch: refetchCrossChain } = useActiveSwaps();
 
-  const [sameChainOrders, setSameChainOrders] = useState<SameChainOrder[]>([]);
-  const [isSameChainLoading, setIsSameChainLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(0);
 
-  // Fetch SUI CCOB orders for current SUI wallet
-  const { orders: suiOrders, isLoading: isSuiLoading } = useSuiUserOrders();
+  // Track previous SUI address to detect wallet change
+  const prevSuiAddressRef = useRef<string | undefined>();
+
+  // Clear all swap storage when SUI wallet changes
+  useEffect(() => {
+    const lowerAddr = suiAccount?.address?.toLowerCase();
+    if (prevSuiAddressRef.current !== undefined && prevSuiAddressRef.current !== lowerAddr) {
+      clearAllSwaps();
+    }
+    prevSuiAddressRef.current = lowerAddr;
+  }, [suiAccount?.address]);
+
+  // Fetch SUI CCOB orders for current SUI wallet (creator + matcher roles)
+  const { creatorOrders: suiOrders, matcherOrders: suiMatcherOrders, isLoading: isSuiLoading } = useSuiUserOrders();
 
   // Fetch SUI same-chain orders (order_book.move)
-  const { orders: suiSameChainRaw, isLoading: isSuiSameChainLoading } = useSuiSameChainOrders();
+  const { orders: suiSameChainRaw, isLoading: isSuiSameChainLoading, refetch: refetchSuiSameChain } = useSuiSameChainOrders();
 
   // Fetch cross-chain orders from both EVM chains via React Query (with retry logic)
   const { orders: sepoliaOrders, isLoading: isSepoliaLoading, refetch: refetchSepolia } = useMyeCrossChainOrders(sepolia.id);
   const { orders: polygonOrders, isLoading: isPolygonLoading, refetch: refetchPolygon } = useMyeCrossChainOrders(polygonAmoy.id);
 
-  const fetchSameChain = useCallback(async () => {
-    if (!address) {
-      setSameChainOrders([]);
-      return;
-    }
-
-    setIsSameChainLoading(true);
-    try {
-      const sameChain = await fetchUserSameChainOrders(address);
-      setSameChainOrders(sameChain);
-    } catch (err) {
-      console.error('Failed to fetch on-chain orders:', err);
-    } finally {
-      setIsSameChainLoading(false);
-    }
-  }, [address]);
-
-  useEffect(() => {
-    fetchSameChain();
-  }, [fetchSameChain, lastRefresh]);
+  // Fetch same-chain EVM orders via React Query so invalidateQueries(['userOrders']) auto-refreshes them
+  const {
+    data: sameChainOrders = [],
+    isLoading: isSameChainLoading,
+    refetch: refetchSameChain,
+  } = useQuery({
+    queryKey: ['userOrders', 'sameChain', address],
+    queryFn: () => fetchUserSameChainOrders(address!),
+    enabled: false, // Lazy — only fetch on manual refetch()
+    staleTime: 30_000,
+  });
 
   const refetch = useCallback(() => {
     refetchCrossChain();
     refetchSepolia();
     refetchPolygon();
+    refetchSameChain();
+    refetchSuiSameChain();
     setLastRefresh(Date.now());
-  }, [refetchCrossChain, refetchSepolia, refetchPolygon]);
+  }, [refetchCrossChain, refetchSepolia, refetchPolygon, refetchSameChain, refetchSuiSameChain]);
+
+  // Async phase enrichment for SUI→EVM Matched orders.
+  // Queries EVM HTLC status + SUI HTLC events from chain so phase is
+  // always derived from blockchain (not localStorage flags).
+  const [suiEnrichMap, setSuiEnrichMap] = useState<Map<string, SuiOrderEnrichment>>(new Map());
+
+  useEffect(() => {
+    const matchedCrossChain = suiOrders.filter(
+      (o) => o.status === 'Matched' && o.targetChainId !== 0 && o.matcherHtlcSwapId
+    );
+    if (matchedCrossChain.length === 0) {
+      setSuiEnrichMap(new Map());
+      return;
+    }
+
+    let cancelled = false;
+
+    const enrich = async () => {
+      const htlcPackageId = getContractAddress('sui:testnet', 'htlc') as string;
+
+      // 1. Query all SwapCreated events sent by the connected SUI wallet
+      const suiHtlcByHashlock = new Map<string, { objectId: string; status: string }>();
+      if (suiAccount?.address) {
+        try {
+          const events = await suiClient.queryEvents({
+            query: { Sender: suiAccount.address },
+            limit: 100,
+            order: 'descending',
+          });
+          const htlcEvents = events.data.filter((e) =>
+            e.type.includes(`${htlcPackageId}::htlc::SwapCreated`)
+          );
+          for (const event of htlcEvents) {
+            const p = event.parsedJson as any;
+            if (!p?.hashlock || !p?.swap_object_id) continue;
+            const hashlock = '0x' + (p.hashlock as number[])
+              .map((b: number) => b.toString(16).padStart(2, '0')).join('');
+            const objectId = String(p.swap_object_id);
+            // Read current SUI HTLC status
+            let status = 'Active';
+            try {
+              const obj = await suiClient.getObject({ id: objectId, options: { showContent: true } });
+              const statusNum = parseInt((obj.data?.content as any)?.fields?.status ?? '1', 10);
+              if (statusNum === 2) status = 'Withdrawn';
+              else if (statusNum === 3) status = 'Refunded';
+            } catch { /* object may not be readable */ }
+            suiHtlcByHashlock.set(hashlock, { objectId, status });
+          }
+        } catch (err) {
+          console.warn('[suiEnrich] Failed to query SUI HTLC events:', err);
+        }
+      }
+
+      // 2. For each Matched order, query EVM HTLC and determine phase
+      const enrichMap = new Map<string, SuiOrderEnrichment>();
+      for (const order of matchedCrossChain) {
+        try {
+          const targetChainId = order.targetChainId as number;
+          const evmClient = getPublicClient(targetChainId);
+          const htlcAddress = getContractAddress(targetChainId, 'htlc') as `0x${string}`;
+          const swapData = await evmClient.readContract({
+            address: htlcAddress,
+            abi: HTLC_ABI,
+            functionName: 'getSwap',
+            args: [order.matcherHtlcSwapId as `0x${string}`],
+          }) as any;
+
+          const matcherStatus = HTLC_STATUS_MAP[swapData.status as number] || 'Empty';
+          const hashlock = swapData.hashlock as string;
+
+          if (matcherStatus === 'Empty' || matcherStatus === 'Refunded') {
+            enrichMap.set(order.id, { phase: 'order_matched' });
+            continue;
+          }
+
+          const creatorHtlc = suiHtlcByHashlock.get(hashlock);
+          if (!creatorHtlc) {
+            enrichMap.set(order.id, { phase: 'order_matched', hashlock });
+          } else if (creatorHtlc.status === 'Active' && matcherStatus === 'Active') {
+            enrichMap.set(order.id, { phase: 'matcher_htlc_created', creatorHtlcObjectId: creatorHtlc.objectId, hashlock });
+          } else if (creatorHtlc.status === 'Withdrawn' && matcherStatus === 'Active') {
+            // Matcher withdrew from SUI (revealed secret), creator hasn't claimed EVM yet
+            enrichMap.set(order.id, { phase: 'secret_revealed', creatorHtlcObjectId: creatorHtlc.objectId, hashlock });
+          } else if (creatorHtlc.status === 'Withdrawn' && matcherStatus === 'Withdrawn') {
+            // Both withdrawn — swap complete
+            enrichMap.set(order.id, { phase: 'completed', creatorHtlcObjectId: creatorHtlc.objectId, hashlock });
+          } else if (matcherStatus === 'Withdrawn') {
+            // Matcher's EVM HTLC withdrawn but no SUI counter-HTLC found — treat as completed
+            enrichMap.set(order.id, { phase: 'completed', creatorHtlcObjectId: creatorHtlc?.objectId, hashlock });
+          } else {
+            enrichMap.set(order.id, { phase: 'order_matched', hashlock });
+          }
+        } catch (err) {
+          console.warn(`[suiEnrich] Failed for order ${order.id}:`, err);
+          enrichMap.set(order.id, { phase: 'order_matched' });
+        }
+      }
+
+      if (!cancelled) setSuiEnrichMap(enrichMap);
+    };
+
+    enrich();
+    return () => { cancelled = true; };
+  }, [suiOrders, suiClient, suiAccount?.address, lastRefresh]);
+
+  // Async phase enrichment for SUI→EVM Matched orders where current wallet is MATCHER.
+  // Reads EVM HTLC status and queries the order CREATOR's SUI events to find the counter-HTLC.
+  const [suiMatcherEnrichMap, setSuiMatcherEnrichMap] = useState<Map<string, SuiOrderEnrichment>>(new Map());
+
+  useEffect(() => {
+    const matchedMatcherOrders = suiMatcherOrders.filter(
+      (o) => o.status === 'Matched' && o.targetChainId !== 0 && o.matcherHtlcSwapId
+    );
+    if (matchedMatcherOrders.length === 0) {
+      setSuiMatcherEnrichMap(new Map());
+      return;
+    }
+
+    let cancelled = false;
+    const htlcPackageId = getContractAddress('sui:testnet', 'htlc') as string;
+
+    const enrich = async () => {
+      const enrichMap = new Map<string, SuiOrderEnrichment>();
+
+      for (const order of matchedMatcherOrders) {
+        try {
+          // 1. Read EVM HTLC (locked by this matcher)
+          const targetChainId = order.targetChainId as number;
+          const evmClient = getPublicClient(targetChainId);
+          const htlcAddress = getContractAddress(targetChainId, 'htlc') as `0x${string}`;
+          const swapData = await evmClient.readContract({
+            address: htlcAddress,
+            abi: HTLC_ABI,
+            functionName: 'getSwap',
+            args: [order.matcherHtlcSwapId as `0x${string}`],
+          }) as any;
+
+          const matcherStatus = HTLC_STATUS_MAP[swapData.status as number] || 'Empty';
+          const hashlock = swapData.hashlock as string;
+
+          if (matcherStatus === 'Empty' || matcherStatus === 'Refunded') {
+            enrichMap.set(order.id, { phase: 'order_matched' });
+            continue;
+          }
+
+          // 2. Query SUI SwapCreated events from the ORDER CREATOR's address
+          let creatorHtlcObjectId: string | undefined;
+          let creatorHtlcStatus = 'Empty';
+          try {
+            const events = await suiClient.queryEvents({
+              query: { Sender: order.creator },
+              limit: 200,
+              order: 'descending',
+            });
+            const htlcEvents = events.data.filter((e) =>
+              e.type.includes(`${htlcPackageId}::htlc::SwapCreated`)
+            );
+            for (const event of htlcEvents) {
+              const p = event.parsedJson as any;
+              if (!p?.hashlock || !p?.swap_object_id) continue;
+              const evtHashlock = '0x' + (p.hashlock as number[])
+                .map((b: number) => b.toString(16).padStart(2, '0')).join('');
+              if (evtHashlock.toLowerCase() !== hashlock.toLowerCase()) continue;
+              creatorHtlcObjectId = String(p.swap_object_id);
+              // Read current status
+              try {
+                const obj = await suiClient.getObject({ id: creatorHtlcObjectId, options: { showContent: true } });
+                const statusNum = parseInt((obj.data?.content as any)?.fields?.status ?? '1', 10);
+                if (statusNum === 2) creatorHtlcStatus = 'Withdrawn';
+                else if (statusNum === 3) creatorHtlcStatus = 'Refunded';
+                else creatorHtlcStatus = 'Active';
+              } catch { /* use default */ }
+              break;
+            }
+          } catch (err) {
+            console.warn(`[suiMatcherEnrich] Failed to query SUI events for creator ${order.creator}:`, err);
+          }
+
+          // 3. Determine phase
+          if (!creatorHtlcObjectId || creatorHtlcStatus === 'Empty') {
+            // Matcher locked EVM HTLC but creator hasn't created SUI counter-HTLC yet
+            enrichMap.set(order.id, { phase: 'order_matched', hashlock });
+          } else if (creatorHtlcStatus === 'Active' && matcherStatus === 'Active') {
+            // Both HTLCs are locked — matcher can withdraw from SUI HTLC
+            enrichMap.set(order.id, { phase: 'matcher_htlc_created', creatorHtlcObjectId, hashlock });
+          } else if (creatorHtlcStatus === 'Withdrawn' && matcherStatus === 'Withdrawn') {
+            // Both withdrawn — swap complete
+            enrichMap.set(order.id, { phase: 'completed', creatorHtlcObjectId, hashlock });
+          } else if (creatorHtlcStatus === 'Withdrawn' && matcherStatus === 'Active') {
+            // Matcher withdrew from SUI HTLC, creator hasn't claimed EVM yet
+            enrichMap.set(order.id, { phase: 'secret_revealed', creatorHtlcObjectId, hashlock });
+          } else if (matcherStatus === 'Withdrawn') {
+            enrichMap.set(order.id, { phase: 'completed', creatorHtlcObjectId, hashlock });
+          } else {
+            enrichMap.set(order.id, { phase: 'order_matched', hashlock });
+          }
+        } catch (err) {
+          console.warn(`[suiMatcherEnrich] Failed for order ${order.id}:`, err);
+          enrichMap.set(order.id, { phase: 'order_matched' });
+        }
+      }
+
+      if (!cancelled) setSuiMatcherEnrichMap(enrichMap);
+    };
+
+    enrich();
+    return () => { cancelled = true; };
+  }, [suiMatcherOrders, suiClient, lastRefresh]);
 
   // Convert same-chain orders to ActiveSwap format for unified display
   const sameChainAsSwaps = useMemo<ActiveSwap[]>(() => {
@@ -187,11 +407,18 @@ export function useAllUserOrders() {
         phase = 'refunded';
         orderStatus = 'Cancelled';
       } else if (order.status === 'Matched') {
-        phase = 'creator_htlc_created'; // Matched order moves to HTLC phase
+        const isCrossChainOrder = order.targetChainId !== 0;
         orderStatus = 'Matched';
+        if (isCrossChainOrder) {
+          // Use on-chain enriched phase if available, otherwise default to order_matched
+          phase = suiEnrichMap.get(order.id)?.phase ?? 'order_matched';
+        } else {
+          phase = 'creator_htlc_created';
+        }
       }
 
-      const isCrossChain = order.targetChainId !== 0; // 0 = same-chain SUI, otherwise cross-chain
+      const isCrossChain = order.targetChainId !== 0;
+      const enrichment = isCrossChain ? suiEnrichMap.get(order.id) : undefined;
 
       return {
         meta: {
@@ -199,12 +426,16 @@ export function useAllUserOrders() {
           role: 'creator' as const,
           sourceChainId: 'sui:testnet',
           targetChainId: isCrossChain ? order.targetChainId : 'sui:testnet',
-          hashlock: '',
+          hashlock: enrichment?.hashlock ?? '',
           sellToken: order.sellToken,
           sellAmount: order.sellAmount.toString(),
           buyToken: order.buyToken,
           buyAmount: order.buyAmount.toString(),
           creator: order.creator,
+          matcher: order.matchedBy,
+          matcherHtlcSwapId: order.matcherHtlcSwapId,
+          creatorHtlcObjectId: enrichment?.creatorHtlcObjectId,
+          targetAddress: order.targetAddress,
           createdAt: Date.now(),
           updatedAt: Date.now(),
         },
@@ -213,7 +444,47 @@ export function useAllUserOrders() {
         expiresAt: order.expiresAt,
       };
     });
-  }, [suiOrders]);
+  }, [suiOrders, suiEnrichMap]);
+
+  // Convert SUI orders where this wallet is the MATCHER (matched_by = suiAddress).
+  // These appear from chain without localStorage so they survive wallet switches.
+  const suiMatcherOrdersAsSwaps = useMemo<ActiveSwap[]>(() => {
+    return suiMatcherOrders.map((order) => {
+      const isCrossChain = order.targetChainId !== 0;
+      const enrichment = isCrossChain ? suiMatcherEnrichMap.get(order.id) : undefined;
+
+      // Phase from matcher-specific enrichment (queries creator's SUI events)
+      let phase: SwapPhase = 'order_matched'; // Matcher always sees matched+ phases
+      let orderStatus = 'Matched';
+      if (order.status === 'Completed') { phase = 'completed'; orderStatus = 'Completed'; }
+      else if (order.status === 'Cancelled') { phase = 'refunded'; orderStatus = 'Cancelled'; }
+      else if (enrichment) { phase = enrichment.phase; }
+
+      return {
+        meta: {
+          orderId: `sui-${order.id}`,
+          role: 'matcher' as const,
+          sourceChainId: 'sui:testnet',
+          targetChainId: isCrossChain ? order.targetChainId : 'sui:testnet',
+          hashlock: enrichment?.hashlock ?? '',
+          sellToken: order.sellToken,
+          sellAmount: order.sellAmount.toString(),
+          buyToken: order.buyToken,
+          buyAmount: order.buyAmount.toString(),
+          creator: order.creator,
+          matcher: order.matchedBy,
+          matcherHtlcSwapId: order.matcherHtlcSwapId,
+          creatorHtlcObjectId: enrichment?.creatorHtlcObjectId,
+          targetAddress: order.targetAddress,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+        phase,
+        orderStatus,
+        expiresAt: order.expiresAt,
+      };
+    });
+  }, [suiMatcherOrders, suiMatcherEnrichMap]);
 
   // Convert directly-fetched cross-chain orders into ActiveSwap format.
   // Only include orders NOT already present in crossChainSwaps (from localStorage/scan),
@@ -223,17 +494,12 @@ export function useAllUserOrders() {
       crossChainSwaps.map((s) => `${s.meta.sourceChainId}-${s.meta.orderId}`)
     );
 
-    console.log('[DEBUG useAllUserOrders] crossChainSwaps (localStorage):', crossChainSwaps.length, crossChainSwaps.map(s => `${s.meta.sourceChainId}-${s.meta.orderId} phase=${s.phase} creator=${s.meta.creator}`));
-    console.log('[DEBUG useAllUserOrders] sepoliaOrders (React Query):', sepoliaOrders.length, sepoliaOrders.map(o => `id=${o.id} status=${o.status} creator=${o.creator}`));
-    console.log('[DEBUG useAllUserOrders] polygonOrders (React Query):', polygonOrders.length, polygonOrders.map(o => `id=${o.id} status=${o.status} creator=${o.creator}`));
-
     const combined = [
       ...sepoliaOrders.map((o) => ({ order: o, chainId: sepolia.id })),
       ...polygonOrders.map((o) => ({ order: o, chainId: polygonAmoy.id })),
     ];
 
     const filtered = combined.filter(({ order, chainId }) => !localKeys.has(`${chainId}-${order.id.toString()}`));
-    console.log('[DEBUG useAllUserOrders] crossChainDirectAsSwaps after dedup:', filtered.length, filtered.map(({order, chainId}) => `${chainId}-${order.id} status=${order.status}`));
 
     return filtered
       .map(({ order, chainId }) => {
@@ -243,7 +509,7 @@ export function useAllUserOrders() {
             orderId: order.id.toString(),
             role: 'creator' as const,
             sourceChainId: chainId,
-            targetChainId: Number(order.targetChainId),
+            targetChainId: fromNumericChainId(Number(order.targetChainId)),
             hashlock: '',
             sellToken: order.sellToken,
             sellAmount: order.sellAmount.toString(),
@@ -301,12 +567,38 @@ export function useAllUserOrders() {
       });
   }, [suiSameChainRaw, suiAccount?.address]);
 
-  // Merge cross-chain, same-chain, and SUI orders
+  // Merge cross-chain, same-chain, and SUI orders.
+  // Dedup by (sourceChainId, targetChainId, orderId): includes targetChainId because
+  // same-chain orderBook and cross-chain CCOB are separate contracts with independent ID spaces.
+  // Blockchain-sourced SUI entries take priority over localStorage copies.
   const allSwaps = useMemo(() => {
-    const merged = [...crossChainSwaps, ...crossChainDirectAsSwaps, ...sameChainAsSwaps, ...suiOrdersAsSwaps, ...suiSameChainAsSwaps];
-    console.log('[DEBUG useAllUserOrders] allSwaps:', merged.length, merged.map(s => `${s.meta.sourceChainId}-${s.meta.orderId} phase=${s.phase} status=${s.orderStatus} creator=${s.meta.creator}`));
-    return merged;
-  }, [crossChainSwaps, crossChainDirectAsSwaps, sameChainAsSwaps, suiOrdersAsSwaps, suiSameChainAsSwaps]);
+    const seen = new Map<string, ActiveSwap>();
+
+    // Validate chain IDs — filter out swaps with unsupported chain 0
+    const isValidChain = (id: number | string) => id !== 0 && id !== '0';
+
+    // Insert in priority order: blockchain SUI sources first, then localStorage/direct
+    const insertAll = (swaps: ActiveSwap[], overwrite: boolean) => {
+      for (const swap of swaps) {
+        if (!isValidChain(swap.meta.sourceChainId) || !isValidChain(swap.meta.targetChainId)) continue;
+        const key = `${String(swap.meta.sourceChainId)}-${String(swap.meta.targetChainId)}-${swap.meta.orderId}`;
+        if (overwrite || !seen.has(key)) {
+          seen.set(key, swap);
+        }
+      }
+    };
+
+    // SUI blockchain entries take highest priority (from on-chain queries)
+    insertAll(suiOrdersAsSwaps, true);
+    insertAll(suiMatcherOrdersAsSwaps, false);
+    insertAll(suiSameChainAsSwaps, false);
+    // EVM entries (localStorage + direct) fill in the rest
+    insertAll(crossChainSwaps, false);
+    insertAll(crossChainDirectAsSwaps, false);
+    insertAll(sameChainAsSwaps, false);
+
+    return Array.from(seen.values());
+  }, [crossChainSwaps, crossChainDirectAsSwaps, sameChainAsSwaps, suiOrdersAsSwaps, suiMatcherOrdersAsSwaps, suiSameChainAsSwaps]);
 
   const activeSwaps = useMemo(
     () => {
@@ -324,7 +616,6 @@ export function useAllUserOrders() {
 
         return true;
       });
-      console.log('[DEBUG useAllUserOrders] activeSwaps:', result.length, result.map(s => `${s.meta.sourceChainId}-${s.meta.orderId} phase=${s.phase} status=${s.orderStatus}`));
       return result;
     },
     [allSwaps]

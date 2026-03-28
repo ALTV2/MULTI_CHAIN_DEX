@@ -26,49 +26,37 @@ export function MySwaps({ initialFilter = 'inProgress' }: MySwapsProps = {}) {
 
   // Check if either EVM or SUI wallet is connected
   const hasWallet = isConnected || !!suiAccount;
-  // Get user address from either wallet (prefer EVM if both connected)
-  const userAddress = address || suiAccount?.address;
+
+  // Check if a value matches any connected wallet address.
+  // Compares against BOTH EVM and SUI wallets — needed for cross-chain swaps where
+  // creator is SUI but matcher is EVM (or vice versa).
+  const evmAddr = address?.toLowerCase();
+  const suiAddr = suiAccount?.address?.toLowerCase();
+  const matchesUser = (val: string | undefined): boolean => {
+    if (!val) return false;
+    const lower = val.toLowerCase();
+    return (!!evmAddr && lower === evmAddr) || (!!suiAddr && lower === suiAddr);
+  };
 
   // Split activeSwaps into "In Progress" (matched+) and "Open" (order_created)
-  // IMPORTANT: Show orders where user is either creator OR matcher
   const inProgressOrders = useMemo(
-    () => {
-      console.log('[MySwaps inProgress] activeSwaps:', activeSwaps.length, 'EVM address:', address, 'SUI address:', suiAccount?.address);
-      return activeSwaps.filter((s) => {
-        // Exclude orders still waiting for match
+    () =>
+      activeSwaps.filter((s) => {
         if (s.phase === 'order_created') return false;
-
-        // Must have connected wallet
-        if (!userAddress) return false;
-
-        const lowerAddress = userAddress.toLowerCase();
-        const isCreator = s.meta.creator?.toLowerCase() === lowerAddress;
-        const isMatcher = s.meta.matcher?.toLowerCase() === lowerAddress;
-        const keep = isCreator || isMatcher;
-
-        console.log(`[MySwaps inProgress] Order ${s.meta.orderId}: phase=${s.phase}, role=${s.meta.role}, creator=${s.meta.creator}, matcher=${s.meta.matcher}, keep=${keep}`);
-        return keep;
-      });
-    },
-    [activeSwaps, userAddress, suiAccount?.address]
+        if (!evmAddr && !suiAddr) return false;
+        return matchesUser(s.meta.creator) || matchesUser(s.meta.matcher);
+      }),
+    [activeSwaps, evmAddr, suiAddr] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const openOrders = useMemo(
-    () => {
-      console.log('[MySwaps open] activeSwaps:', activeSwaps.length, 'EVM address:', address, 'SUI address:', suiAccount?.address);
-      return activeSwaps.filter((s) => {
-        // Only show orders waiting for match
+    () =>
+      activeSwaps.filter((s) => {
         if (s.phase !== 'order_created') return false;
-
-        // Only show if user is the creator (matcher doesn't exist yet for open orders)
-        if (!userAddress) return false;
-
-        const keep = s.meta.creator?.toLowerCase() === userAddress.toLowerCase();
-        console.log(`[MySwaps open] Order ${s.meta.orderId}: phase=${s.phase}, role=${s.meta.role}, creator=${s.meta.creator}, keep=${keep}`);
-        return keep;
-      });
-    },
-    [activeSwaps, userAddress, suiAccount?.address]
+        if (!evmAddr && !suiAddr) return false;
+        return matchesUser(s.meta.creator);
+      }),
+    [activeSwaps, evmAddr, suiAddr] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   if (!hasWallet) {

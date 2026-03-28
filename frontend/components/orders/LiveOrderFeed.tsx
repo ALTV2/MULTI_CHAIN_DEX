@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -119,8 +120,14 @@ function OrderRow({ order }: { order: LiveOrder }) {
 }
 
 export function LiveOrderFeed() {
-  const { data: orders, isLoading } = useLiveOrderFeed();
+  const { data: orders, isLoading, refetch } = useLiveOrderFeed();
   const { t } = useTranslation();
+  const [loaded, setLoaded] = useState(false);
+
+  const handleLoad = () => {
+    setLoaded(true);
+    refetch();
+  };
 
   return (
     <Card variant="glass" className="overflow-hidden">
@@ -166,7 +173,17 @@ export function LiveOrderFeed() {
 
         {/* Content */}
         <div className="px-2 py-2">
-          {isLoading ? (
+          {!loaded && !orders?.length ? (
+            <div className="flex flex-col items-center justify-center py-12 px-4">
+              <button
+                onClick={handleLoad}
+                className="px-6 py-3 rounded-xl bg-accent-blue/10 border border-accent-blue/20 text-accent-blue font-medium text-sm hover:bg-accent-blue/20 transition-colors"
+              >
+                Load Active Orders
+              </button>
+              <p className="text-xs text-gray-500 mt-2">Click to fetch orders from blockchain</p>
+            </div>
+          ) : isLoading ? (
             <div className="space-y-2 px-2">
               {[1, 2, 3, 4, 5].map((i) => (
                 <div

@@ -4,8 +4,6 @@ import { useAccount } from 'wagmi';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import Link from 'next/link';
-import { useOrderBook } from '@/hooks/useOrderBook';
-import { useAllUserOrders } from '@/hooks/useAllUserOrders';
 import { getSupportedChainIds } from '@/lib/contracts/addresses';
 import { LiveOrderFeed } from '@/components/orders/LiveOrderFeed';
 import { AboutSection } from '@/components/common/AboutSection';
@@ -13,8 +11,6 @@ import { useTranslation } from '@/hooks/useTranslation';
 
 export default function HomePage() {
   const { isConnected } = useAccount();
-  const { orders: allOrders } = useOrderBook();
-  const { activeSwaps } = useAllUserOrders();
   const chainCount = getSupportedChainIds().length;
   const { t } = useTranslation();
 
@@ -52,12 +48,12 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Stats — 3 columns, removed Protocol */}
+      {/* Stats */}
       <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
-          { label: t('dashboard.stats.activeOrders'), value: allOrders.length, color: 'text-accent-blue' },
-          { label: t('dashboard.stats.inProgress'), value: activeSwaps.length, color: 'text-accent-green' },
-          { label: t('dashboard.stats.chains'), value: chainCount, color: 'text-accent-purple' },
+          { label: t('dashboard.stats.chains'), value: `${chainCount + 1}`, color: 'text-accent-blue', sub: 'EVM + SUI' },
+          { label: 'Swap Protocol', value: 'HTLC', color: 'text-accent-green', sub: 'Hash Time-Locked' },
+          { label: 'Security', value: 'Trustless', color: 'text-accent-purple', sub: 'No intermediaries' },
         ].map((stat) => (
           <Card key={stat.label} variant="glass">
             <CardContent className="text-center py-4">

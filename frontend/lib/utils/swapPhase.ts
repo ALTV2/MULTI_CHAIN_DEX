@@ -21,11 +21,36 @@ export function determineSwapPhase(params: {
   const {
     meta,
     orderStatus,
-    creatorHtlcStatus,
-    matcherHtlcStatus,
     creatorHtlcTimelock,
     matcherHtlcTimelock,
   } = params;
+
+  // For SUI chains, on-chain HTLC status is not fetched by useActiveSwaps (EVM-only scanner).
+  // Infer HTLC existence from stored metadata object IDs / swap IDs instead.
+  const isSuiSource = typeof meta.sourceChainId === 'string';
+  const isSuiTarget = typeof meta.targetChainId === 'string';
+
+  let creatorHtlcStatus = params.creatorHtlcStatus;
+  let matcherHtlcStatus = params.matcherHtlcStatus;
+
+  // SUI source (SUI→EVM): infer HTLC statuses from stored metadata and withdrawal flags
+  if (isSuiSource) {
+    if (!creatorHtlcStatus) {
+      if (meta.creatorHtlcWithdrawn) creatorHtlcStatus = 'Withdrawn';
+      else if (meta.creatorHtlcObjectId || meta.creatorHtlcSwapId) creatorHtlcStatus = 'Active';
+    }
+    if (!matcherHtlcStatus && meta.matcherHtlcSwapId) {
+      matcherHtlcStatus = meta.matcherHtlcWithdrawn ? 'Withdrawn' : 'Active';
+    }
+  }
+
+  // SUI target (EVM→SUI): infer matcher HTLC status from stored metadata and withdrawal flag
+  if (isSuiTarget) {
+    if (!matcherHtlcStatus) {
+      if (meta.matcherHtlcWithdrawn) matcherHtlcStatus = 'Withdrawn';
+      else if (meta.matcherHtlcObjectId || meta.matcherHtlcSwapId) matcherHtlcStatus = 'Active';
+    }
+  }
 
   const now = BigInt(Math.floor(Date.now() / 1000));
 
@@ -77,6 +102,15 @@ export function determineSwapPhase(params: {
     return 'secret_revealed';
   }
 
+  // Pattern 2 (SUI→EVM): creator's SUI HTLC was withdrawn by matcher (secret revealed on SUI).
+  // Matcher's EVM HTLC is still active — creator can now claim it using the revealed secret.
+  if (creatorHtlcStatus === 'Withdrawn' && matcherHtlcStatus === 'Active') {
+    if (matcherHtlcTimelock && now >= matcherHtlcTimelock) {
+      return 'refundable';
+    }
+    return 'secret_revealed';
+  }
+
   // Both HTLCs exist and are active
   if (creatorHtlcStatus === 'Active' && matcherHtlcStatus === 'Active') {
     // Check if matcher's HTLC timelock is expired (creator can't withdraw)
@@ -101,7 +135,9 @@ export function determineSwapPhase(params: {
     if (matcherHtlcTimelock && now >= matcherHtlcTimelock) {
       return 'refundable';
     }
-    // Timelock still valid: creator hasn't locked yet (or refunded), matcher is waiting
+    // SUI→EVM Pattern 2: matcher locked EVM HTLC first, creator still needs to create SUI counter-HTLC
+    if (isSuiSource) return 'order_matched';
+    // EVM→EVM standard: creator already locked, matcher locked but creator refunded → creator needs to re-lock
     return 'creator_htlc_created';
   }
 
@@ -124,7 +160,32 @@ export function determineSwapPhase(params: {
   return 'order_created';
 }
 
-export function getPhaseDescription(phase: SwapPhase, role: string): string {
+export function getPhaseDescription(phase: SwapPhase, role: string, sourceChainId?: number | string): string {
+  const isSuiSource = typeof sourceChainId === 'string';
+
+  // SUI→EVM flow has reversed lock order: matcher locks EVM first (during matching),
+  // then creator locks SUI counter-HTLC. Override descriptions for clarity.
+  if (isSuiSource) {
+    if (phase === 'order_matched' && role === 'creator') {
+      return 'Order matched! Counterparty has locked EVM tokens. Now lock your SUI tokens to continue.';
+    }
+    if (phase === 'order_matched' && role === 'matcher') {
+      return 'You locked EVM tokens in HTLC. Waiting for the creator to lock their SUI tokens as counter-HTLC.';
+    }
+    if (phase === 'matcher_htlc_created' && role === 'creator') {
+      return 'Both sides locked! Your SUI tokens are locked, and the counterparty locked EVM tokens. Waiting for them to withdraw from your SUI HTLC — this will reveal the secret.';
+    }
+    if (phase === 'matcher_htlc_created' && role === 'matcher') {
+      return 'Both sides locked! Withdraw from the creator\'s SUI HTLC to reveal your secret and complete the swap.';
+    }
+    if (phase === 'secret_revealed' && role === 'creator') {
+      return 'Secret revealed! The counterparty withdrew your SUI tokens. Use the secret to claim your EVM tokens.';
+    }
+    if (phase === 'secret_revealed' && role === 'matcher') {
+      return 'You revealed the secret by withdrawing SUI tokens. Waiting for the creator to claim EVM tokens to complete the swap.';
+    }
+  }
+
   const descriptions: Record<SwapPhase, Record<string, string>> = {
     order_created: {
       creator: 'Waiting for someone to match your order',
@@ -139,7 +200,7 @@ export function getPhaseDescription(phase: SwapPhase, role: string): string {
       matcher: 'Initiator locked tokens. Now lock your tokens on the target chain',
     },
     matcher_htlc_created: {
-      creator: 'Both sides locked! Claim your tokens to complete the trade',
+      creator: 'Both sides locked! Withdraw from the counterparty\'s HTLC to claim your tokens.',
       matcher: 'Both sides locked! Wait for the initiator to claim tokens',
     },
     secret_revealed: {
@@ -193,12 +254,21 @@ export function getRequiredChain(phase: SwapPhase, role: string, meta: StoredSwa
     case 'creator_htlc_created':
       // Matcher locks on target chain
       return role === 'matcher' ? meta.targetChainId : null;
-    case 'matcher_htlc_created':
+    case 'matcher_htlc_created': {
       // Creator withdraws from matcher's HTLC (on target chain)
-      return role === 'creator' ? meta.targetChainId : null;
-    case 'secret_revealed':
-      // Matcher withdraws from creator's HTLC (on source chain)
+      if (role === 'creator') return meta.targetChainId;
+      // SUI→EVM: matcher withdraws from creator's SUI HTLC (on source chain)
+      const isSuiSrc = typeof meta.sourceChainId === 'string';
+      if (isSuiSrc && role === 'matcher') return meta.sourceChainId;
+      return null;
+    }
+    case 'secret_revealed': {
+      // SUI→EVM Pattern 2: creator needs to claim matcher's EVM HTLC (on target EVM chain)
+      const isSuiSrc = typeof meta.sourceChainId === 'string';
+      if (isSuiSrc && role === 'creator') return meta.targetChainId;
+      // Standard EVM: matcher withdraws from creator's HTLC (on source chain)
       return role === 'matcher' ? meta.sourceChainId : null;
+    }
     case 'refundable':
       // Refund from the chain where you locked tokens
       return role === 'creator' ? meta.sourceChainId : meta.targetChainId;

@@ -2,9 +2,10 @@
 
 import { useMemo } from 'react';
 import { useCrossChainOrdersForTarget, type CrossChainOrder } from './useCrossChainOrders';
-import { getTokenByAddress } from '@/lib/constants/tokens';
+import { getTokenByAddress, evmPlaceholderToSuiToken } from '@/lib/constants/tokens';
 import { formatUnits } from 'viem';
 import { sepolia, polygonAmoy } from 'wagmi/chains';
+import { SUI_NUMERIC_CHAIN_ID } from '@/lib/contracts/addresses';
 
 export interface SuiSameChainMeta {
   orderObjectId: string;
@@ -27,99 +28,75 @@ export interface UnifiedOrder extends CrossChainOrder {
   suiSameChainMeta?: SuiSameChainMeta;
 }
 
+function enrichOrders(
+  orders: CrossChainOrder[],
+  sourceChainId: number,
+  targetChainId: number | string,
+  targetChainIdForTokenLookup: number | string,
+): UnifiedOrder[] {
+  return orders
+    .filter((o) => o.status === 'Active')
+    .map((order) => {
+      const sellTokenInfo = getTokenByAddress(sourceChainId, order.sellToken);
+
+      // For EVM→SUI: buyToken is a placeholder — resolve to SUI token
+      const isSuiTarget = typeof targetChainIdForTokenLookup === 'string';
+      let buyTokenAddr: string = order.buyToken;
+      if (isSuiTarget) {
+        const suiToken = evmPlaceholderToSuiToken(order.buyToken);
+        if (suiToken) buyTokenAddr = suiToken;
+      }
+      const buyTokenInfo = getTokenByAddress(targetChainIdForTokenLookup, buyTokenAddr);
+
+      const sellDecimals = sellTokenInfo?.decimals ?? 18;
+      const buyDecimals = buyTokenInfo?.decimals ?? 18;
+
+      const sellNum = parseFloat(formatUnits(order.sellAmount, sellDecimals));
+      const buyNum = parseFloat(formatUnits(order.buyAmount, buyDecimals));
+
+      const price = sellNum > 0 ? buyNum / sellNum : 0;
+      const inversePrice = buyNum > 0 ? sellNum / buyNum : 0;
+
+      return {
+        ...order,
+        price,
+        inversePrice,
+        sellSymbol: sellTokenInfo?.symbol ?? '???',
+        buySymbol: buyTokenInfo?.symbol ?? '???',
+        formattedSellAmount: formatUnits(order.sellAmount, sellDecimals),
+        formattedBuyAmount: formatUnits(order.buyAmount, buyDecimals),
+        sourceChainIdNum: sourceChainId,
+        targetChainIdNum: targetChainIdForTokenLookup,
+      };
+    });
+}
+
 /**
  * Fixed version with static hook calls instead of dynamic loops
  * Fetches cross-chain orders from all supported chain pairs
  */
 export function useAllUnifiedOrdersFixed(params?: {}) {
   // Call hooks statically for each chain pair (not in a loop!)
+  // EVM ↔ EVM
   const sepoliaToAmoy = useCrossChainOrdersForTarget(sepolia.id, polygonAmoy.id);
   const amoyToSepolia = useCrossChainOrdersForTarget(polygonAmoy.id, sepolia.id);
+  // EVM → SUI (targetChainId = 101 on-chain, maps to 'sui:testnet')
+  const sepoliaToSui = useCrossChainOrdersForTarget(sepolia.id, SUI_NUMERIC_CHAIN_ID);
+  const amoyToSui = useCrossChainOrdersForTarget(polygonAmoy.id, SUI_NUMERIC_CHAIN_ID);
 
-  const isLoading = sepoliaToAmoy.isLoading || amoyToSepolia.isLoading;
+  const isLoading = sepoliaToAmoy.isLoading || amoyToSepolia.isLoading || sepoliaToSui.isLoading || amoyToSui.isLoading;
 
   const orders = useMemo<UnifiedOrder[]>(() => {
-    console.log('🔄 useAllUnifiedOrdersFixed processing...');
-    console.log('  Sepolia → Amoy raw orders:', sepoliaToAmoy.orders.length, sepoliaToAmoy.orders);
-    console.log('  Amoy → Sepolia raw orders:', amoyToSepolia.orders.length, amoyToSepolia.orders);
+    const allOrders = [
+      ...enrichOrders(sepoliaToAmoy.orders, sepolia.id, polygonAmoy.id, polygonAmoy.id),
+      ...enrichOrders(amoyToSepolia.orders, polygonAmoy.id, sepolia.id, sepolia.id),
+      // EVM→SUI: numeric 101 on-chain, but display as 'sui:testnet'
+      ...enrichOrders(sepoliaToSui.orders, sepolia.id, SUI_NUMERIC_CHAIN_ID, 'sui:testnet'),
+      ...enrichOrders(amoyToSui.orders, polygonAmoy.id, SUI_NUMERIC_CHAIN_ID, 'sui:testnet'),
+    ];
 
-    let allOrders: UnifiedOrder[] = [];
-
-    // Process Sepolia → Amoy orders
-    const sepoliaToAmoyFiltered = sepoliaToAmoy.orders.filter((o) => o.status === 'Active');
-    console.log('  Sepolia → Amoy filtered (Active only):', sepoliaToAmoyFiltered.length);
-    const sepoliaToAmoyEnriched = sepoliaToAmoyFiltered.map((order) => {
-      const sellTokenInfo = getTokenByAddress(sepolia.id, order.sellToken);
-      const buyTokenInfo = getTokenByAddress(polygonAmoy.id, order.buyToken);
-
-      const sellDecimals = sellTokenInfo?.decimals ?? 18;
-      const buyDecimals = buyTokenInfo?.decimals ?? 18;
-
-      const sellNum = parseFloat(formatUnits(order.sellAmount, sellDecimals));
-      const buyNum = parseFloat(formatUnits(order.buyAmount, buyDecimals));
-
-      const price = sellNum > 0 ? buyNum / sellNum : 0;
-      const inversePrice = buyNum > 0 ? sellNum / buyNum : 0;
-
-      return {
-        ...order,
-        price,
-        inversePrice,
-        sellSymbol: sellTokenInfo?.symbol ?? '???',
-        buySymbol: buyTokenInfo?.symbol ?? '???',
-        formattedSellAmount: formatUnits(order.sellAmount, sellDecimals),
-        formattedBuyAmount: formatUnits(order.buyAmount, buyDecimals),
-        sourceChainIdNum: sepolia.id,
-        targetChainIdNum: polygonAmoy.id,
-      };
-    });
-
-    // Process Amoy → Sepolia orders
-    const amoyToSepoliaFiltered = amoyToSepolia.orders.filter((o) => o.status === 'Active');
-    console.log('  Amoy → Sepolia filtered (Active only):', amoyToSepoliaFiltered.length);
-    const amoyToSepoliaEnriched = amoyToSepoliaFiltered.map((order) => {
-      const sellTokenInfo = getTokenByAddress(polygonAmoy.id, order.sellToken);
-      const buyTokenInfo = getTokenByAddress(sepolia.id, order.buyToken);
-
-      const sellDecimals = sellTokenInfo?.decimals ?? 18;
-      const buyDecimals = buyTokenInfo?.decimals ?? 18;
-
-      const sellNum = parseFloat(formatUnits(order.sellAmount, sellDecimals));
-      const buyNum = parseFloat(formatUnits(order.buyAmount, buyDecimals));
-
-      const price = sellNum > 0 ? buyNum / sellNum : 0;
-      const inversePrice = buyNum > 0 ? sellNum / buyNum : 0;
-
-      return {
-        ...order,
-        price,
-        inversePrice,
-        sellSymbol: sellTokenInfo?.symbol ?? '???',
-        buySymbol: buyTokenInfo?.symbol ?? '???',
-        formattedSellAmount: formatUnits(order.sellAmount, sellDecimals),
-        formattedBuyAmount: formatUnits(order.buyAmount, buyDecimals),
-        sourceChainIdNum: polygonAmoy.id,
-        targetChainIdNum: sepolia.id,
-      };
-    });
-
-    allOrders = [...sepoliaToAmoyEnriched, ...amoyToSepoliaEnriched];
-
-    console.log('  📊 Combined enriched orders:', allOrders.length);
-    allOrders.forEach((o, i) => {
-      console.log(`    Order ${i}:`, {
-        id: o.id.toString(),
-        sourceChain: o.sourceChainIdNum,
-        targetChain: o.targetChainIdNum,
-        sellSymbol: o.sellSymbol,
-        buySymbol: o.buySymbol,
-        status: o.status,
-      });
-    });
-
-    // Sort by price (best price first)
     return allOrders.sort((a, b) => a.price - b.price);
-  }, [sepoliaToAmoy.orders, amoyToSepolia.orders]);
+  }, [sepoliaToAmoy.orders, amoyToSepolia.orders, sepoliaToSui.orders, amoyToSui.orders]);
 
   return { orders, isLoading };
 }

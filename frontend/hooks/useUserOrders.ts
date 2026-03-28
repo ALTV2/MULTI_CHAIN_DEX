@@ -80,8 +80,8 @@ export function useUserOrders() {
       // Sort by newest first
       return orders.sort((a, b) => Number(b.id - a.id));
     },
-    enabled: false, // Lazy — only fetch on manual refetch()
-    staleTime: 30_000,
+    enabled: !!publicClient && !!userAddress,
+    staleTime: 60_000,
   });
 
   // Event watchers removed — use manual refresh to reduce RPC load

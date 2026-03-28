@@ -58,12 +58,12 @@ export function useOrderBookForChain(chainId: number) {
 
       return orders;
     },
-    refetchOnMount: false,
+    refetchOnMount: true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    staleTime: ORDER_BOOK_STALE_MS,
+    staleTime: 60_000,
     gcTime: 5 * 60 * 1000,
-    enabled: false, // Lazy — only fetch on manual refetch()
+    enabled: true, // Load once on mount, then manual refetch()
   });
 
   return {

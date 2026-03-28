@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useChainId, useSwitchChain, useWriteContract } from 'wagmi';
+import { useTxReceipt } from '@/hooks/useTxReceipt';
 import { useCurrentAccount } from '@mysten/dapp-kit';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -16,7 +17,7 @@ import { useReactivateCrossChainOrder } from '@/hooks/useCrossChainOrders';
 import { updateSwap, saveSwap } from '@/lib/utils/swapStorage';
 import { getRequiredChain } from '@/lib/utils/swapPhase';
 import { getContractAddress, chainConfig, SupportedChainId, getExplorerTxUrl } from '@/lib/contracts/addresses';
-import { isNativeToken } from '@/lib/constants/tokens';
+import { isNativeToken, evmPlaceholderToSuiToken } from '@/lib/constants/tokens';
 import { useMemo } from 'react';
 import { orderBookABI } from '@/lib/contracts/abis/OrderBook';
 import { CROSS_CHAIN_ORDER_BOOK_ABI } from '@/lib/contracts/abis/CrossChainOrderBook';
@@ -198,9 +199,7 @@ function OrderCreatedAction({ swap, onUpdate, detectedHTLC }: { swap: ActiveSwap
   const { cancelOrder: cancelSuiOrder, isPending: isCancellingSui } = useCancelSuiOrder();
 
   // Wait for cancellation transaction
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
-    hash: cancelTxHash,
-  });
+  const { isLoading: isConfirming, isSuccess } = useTxReceipt(cancelTxHash);
 
   const isCancelling = !!cancelTxHash && !isSuccess;
 
@@ -595,9 +594,7 @@ function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
 
   const { createSwap, isPending: isCreating, isConfirming, isSuccess } = useCreateHTLCSwap(sourceChainId);
   const { writeContractAsync } = useWriteContract();
-  const { isLoading: isReactivateConfirming, isSuccess: isReactivateSuccess } = useWaitForTransactionReceipt({
-    hash: reactivateTxHash,
-  });
+  const { isLoading: isReactivateConfirming, isSuccess: isReactivateSuccess } = useTxReceipt(reactivateTxHash);
 
   const isReactivating = !!reactivateTxHash && !isReactivateSuccess;
 
@@ -872,10 +869,17 @@ function MatcherLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
           setError('Connect Slush (SUI) wallet to lock tokens on SUI');
           return;
         }
-        const creatorSuiAddress = meta.creatorSuiAddress || meta.targetAddress || '';
+        // For EVM→SUI: targetAddress/creatorSuiAddress may be truncated 20-byte EVM format.
+        // SUI expects 32-byte (64 hex chars). Zero-pad on the left if needed.
+        let creatorSuiAddress = meta.creatorSuiAddress || meta.targetAddress || '';
         if (!creatorSuiAddress) {
           setError('Creator SUI address not found in swap metadata');
           return;
+        }
+        // Ensure SUI address is 32 bytes (0x + 64 hex)
+        const rawHex = creatorSuiAddress.replace('0x', '');
+        if (rawHex.length < 64) {
+          creatorSuiAddress = `0x${rawHex.padStart(64, '0')}`;
         }
 
         const swapId = generateSwapIdCrossChain(
@@ -886,13 +890,16 @@ function MatcherLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
           meta.targetChainId
         );
 
+        // For EVM→SUI: meta.buyToken is an EVM placeholder — resolve to real SUI token type
+        const suiTokenType = evmPlaceholderToSuiToken(meta.buyToken) || meta.buyToken;
+
         setStep('locking');
         const { digest, htlcObjectId } = await suiHTLC.createSwap({
           swapId,
           participant: creatorSuiAddress,
           hashlock,
           timelock,
-          tokenType: meta.buyToken,
+          tokenType: suiTokenType,
           amount: buyAmount,
         });
 

@@ -51,7 +51,7 @@ export default function HomePage() {
       {/* Stats */}
       <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
-          { label: t('dashboard.stats.chains'), value: `${chainCount + 1}`, color: 'text-accent-blue', sub: 'EVM + SUI' },
+          { label: t('dashboard.stats.chains'), value: `${chainCount}`, color: 'text-accent-blue', sub: 'EVM + SUI' },
           { label: 'Swap Protocol', value: 'HTLC', color: 'text-accent-green', sub: 'Hash Time-Locked' },
           { label: 'Security', value: 'Trustless', color: 'text-accent-purple', sub: 'No intermediaries' },
         ].map((stat) => (

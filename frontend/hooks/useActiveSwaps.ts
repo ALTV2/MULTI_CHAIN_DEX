@@ -5,7 +5,7 @@ import { useAccount } from 'wagmi';
 import { HTLC_ABI } from '@/lib/contracts/abis/HTLC';
 import { CROSS_CHAIN_ORDER_BOOK_ABI } from '@/lib/contracts/abis/CrossChainOrderBook';
 import { getContractAddress, getSupportedChainIds, fromNumericChainId } from '@/lib/contracts/addresses';
-import { getSwaps, getSwap, saveSwap, updateSwap, cleanupAllFakeOrders, clearAllSwaps } from '@/lib/utils/swapStorage';
+import { getSwaps, getSwap, saveSwap, updateSwap, cleanupAllFakeOrders, clearWalletSwaps } from '@/lib/utils/swapStorage';
 import { determineSwapPhase } from '@/lib/utils/swapPhase';
 import { getPublicClient } from '@/lib/utils/rpcClient';
 import type { StoredSwapMeta, ActiveSwap } from '@/types/swap';
@@ -125,11 +125,12 @@ async function scanBlockchainForSwaps(walletAddress: string): Promise<number> {
               continue;
             }
 
+            const resolvedTargetChainId = fromNumericChainId(Number(order.targetChainId));
             const meta: StoredSwapMeta = {
               orderId,
               role: 'matcher',
               sourceChainId: chainIdNum,
-              targetChainId: fromNumericChainId(Number(order.targetChainId)),
+              targetChainId: resolvedTargetChainId,
               hashlock: '',
               sellToken: order.sellToken,
               sellAmount: order.sellAmount.toString(),
@@ -137,6 +138,8 @@ async function scanBlockchainForSwaps(walletAddress: string): Promise<number> {
               buyAmount: order.buyAmount.toString(),
               creator: order.creator,
               matcher: walletAddress,
+              targetAddress: order.targetAddress,
+              creatorSuiAddress: typeof resolvedTargetChainId === 'string' ? order.targetAddress : undefined,
               createdAt: Date.now(),
               updatedAt: Date.now(),
             };
@@ -462,13 +465,15 @@ export function useActiveSwaps() {
   const cleanupDone = useRef(false); // Track if we've run cleanup
   const prevAddressRef = useRef<string | undefined>();
 
-  // Clear all swap storage when wallet changes so phase is re-derived from blockchain
+  // Clear only the PREVIOUS wallet's swap storage on wallet switch, then auto-refetch
   useEffect(() => {
     const lowerAddr = address?.toLowerCase();
     if (prevAddressRef.current !== undefined && prevAddressRef.current !== lowerAddr) {
-      clearAllSwaps();
+      if (prevAddressRef.current) clearWalletSwaps(prevAddressRef.current);
       setSwaps([]);
       forceNextScan.current = true;
+      // Auto-refetch for the new wallet
+      setLastRefresh(Date.now());
     }
     prevAddressRef.current = lowerAddr;
   }, [address]);
@@ -521,9 +526,8 @@ export function useActiveSwaps() {
     }
   }, [address]);
 
-  // Only fetch on manual refresh (lastRefresh > 0), not on mount
+  // Fetch on mount and on manual refresh
   useEffect(() => {
-    if (lastRefresh === 0) return;
     fetchAll();
   }, [fetchAll, lastRefresh]);
 

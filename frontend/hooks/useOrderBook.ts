@@ -80,8 +80,8 @@ export function useOrderBook() {
       // Sort by newest first (highest ID)
       return orders.sort((a, b) => Number(b.id - a.id));
     },
-    staleTime: ORDER_BOOK_STALE_MS,
-    enabled: false, // Lazy — only fetch on manual refetch()
+    staleTime: 60_000,
+    enabled: true,
   });
 
   // Event watchers removed — use manual refresh to reduce RPC load

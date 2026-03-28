@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useAccount, useChainId, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from 'wagmi';
+import { useAccount, useChainId, useSwitchChain, useWriteContract } from 'wagmi';
+import { useTxReceipt } from '@/hooks/useTxReceipt';
 import { useCurrentAccount } from '@mysten/dapp-kit';
 import { useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/Badge';
@@ -52,9 +53,7 @@ export function UnifiedOrderTable({
   const { cancelOrder: cancelSuiOrder, isPending: isSuiCancelling } = useCancelSuiOrder();
 
   // Wait for cancellation transaction
-  const { isLoading: isConfirming, isSuccess: isCancelSuccess } = useWaitForTransactionReceipt({
-    hash: cancelTxHash,
-  });
+  const { isLoading: isConfirming, isSuccess: isCancelSuccess } = useTxReceipt(cancelTxHash);
 
   // Invalidate caches when cancellation is confirmed
   useEffect(() => {

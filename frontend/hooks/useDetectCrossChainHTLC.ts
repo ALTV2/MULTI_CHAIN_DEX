@@ -127,8 +127,13 @@ export function useDetectCrossChainHTLC(params: {
   // ── Case 2: Poll SUI SwapCreated events (EVM→SUI) ───────────────────────
   useEffect(() => {
     if (!shouldDetectSui || !suiPackageId || detectedHTLC) return;
-    const participantAddr = creatorSuiAddress || creatorAddress;
+    let participantAddr = creatorSuiAddress || creatorAddress;
     if (!participantAddr) return;
+    // Ensure SUI address is 32-byte format (pad EVM 20-byte addresses)
+    const rawHex = participantAddr.replace('0x', '');
+    if (rawHex.length < 64) {
+      participantAddr = `0x${rawHex.padStart(64, '0')}`;
+    }
 
     let isMounted = true;
 

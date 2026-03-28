@@ -1,6 +1,7 @@
 'use client';
 
-import { useWriteContract, useReadContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useWriteContract, useReadContract } from 'wagmi';
+import { useTxReceipt } from '@/hooks/useTxReceipt';
 import { useCallback, useMemo } from 'react';
 import { keccak256, encodeAbiParameters, parseAbiParameters } from 'viem';
 import { HTLC_ABI } from '@/lib/contracts/abis/HTLC';
@@ -58,9 +59,7 @@ export function useCreateHTLCSwap(chainId: number) {
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();
 
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
-    hash,
-  });
+  const { isLoading: isConfirming, isSuccess } = useTxReceipt(hash);
 
   const createSwap = useCallback(
     async (params: {
@@ -119,9 +118,7 @@ export function useWithdrawHTLC(chainId: number) {
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();
 
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
-    hash,
-  });
+  const { isLoading: isConfirming, isSuccess } = useTxReceipt(hash);
 
   const withdraw = useCallback(
     async (swapId: `0x${string}`, secret: `0x${string}`) => {
@@ -163,9 +160,7 @@ export function useRefundHTLC(chainId: number) {
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();
 
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
-    hash,
-  });
+  const { isLoading: isConfirming, isSuccess } = useTxReceipt(hash);
 
   const refund = useCallback(
     async (swapId: `0x${string}`) => {

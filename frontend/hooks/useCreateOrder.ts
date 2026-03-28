@@ -4,9 +4,9 @@ import { useState, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   useWriteContract,
-  useWaitForTransactionReceipt,
   useChainId,
 } from 'wagmi';
+import { useTxReceipt } from '@/hooks/useTxReceipt';
 import { orderBookABI } from '@/lib/contracts/abis/OrderBook';
 import { getContractAddress } from '@/lib/contracts/addresses';
 import { isNativeToken } from '@/lib/constants/tokens';
@@ -32,9 +32,7 @@ export function useCreateOrder() {
   const orderBookAddress = getContractAddress(chainId, 'orderBook') as `0x${string}`;
 
   // Wait for transaction
-  const { isLoading: isWaiting, isSuccess } = useWaitForTransactionReceipt({
-    hash: txHash,
-  });
+  const { isLoading: isWaiting, isSuccess } = useTxReceipt(txHash);
 
   // Invalidate caches after transaction is confirmed
   useEffect(() => {

@@ -1,6 +1,7 @@
 'use client';
 
-import { useWriteContract, useWaitForTransactionReceipt, useAccount } from 'wagmi';
+import { useWriteContract, useAccount } from 'wagmi';
+import { useTxReceipt } from '@/hooks/useTxReceipt';
 import { useCallback, useMemo, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CROSS_CHAIN_ORDER_BOOK_ABI } from '@/lib/contracts/abis/CrossChainOrderBook';
@@ -58,27 +59,23 @@ export function useCrossChainOrdersForTarget(sourceChainId: number, targetChainI
 
   const query = useQuery({
     queryKey: ['crossChainOrders', sourceChainId, targetChainId],
-    networkMode: 'offlineFirst', // Don't cancel based on network status
+    networkMode: 'offlineFirst',
     queryFn: async (): Promise<any[]> => {
       const client = getPublicClient(sourceChainId);
-
-      console.log(`🔍 Fetching cross-chain orders: ${sourceChainId} → ${targetChainId}`);
       const data = await client.readContract({
         address: ccobAddress,
         abi: CROSS_CHAIN_ORDER_BOOK_ABI,
         functionName: 'getActiveOrdersForTargetChain',
         args: [BigInt(targetChainId)],
       }) as any[];
-
-      console.log(`📦 Raw orders fetched (${sourceChainId} → ${targetChainId}):`, data?.length || 0, data);
       return data || [];
     },
-    enabled: false, // Lazy — only fetch on manual refetch()
-    refetchOnMount: false,
+    enabled: !!ccobAddress,
+    refetchOnMount: true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     gcTime: 5 * 60 * 1000,
-    staleTime: 30_000,
+    staleTime: 60_000,
   });
 
   const orders = useMemo<CrossChainOrder[]>(() => {
@@ -117,12 +114,12 @@ export function useMyeCrossChainOrders(chainId: number) {
 
       return data || [];
     },
-    enabled: false, // Lazy — only fetch on manual refetch()
-    refetchOnMount: false,
+    enabled: !!address && !!ccobAddress,
+    refetchOnMount: true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     gcTime: 5 * 60 * 1000,
-    staleTime: 30_000,
+    staleTime: 60_000,
   });
 
   const orders = useMemo<CrossChainOrder[]>(() => {
@@ -146,9 +143,7 @@ export function useCreateCrossChainOrder(chainId: number) {
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();
 
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
-    hash,
-  });
+  const { isLoading: isConfirming, isSuccess } = useTxReceipt(hash);
 
   // Invalidate order caches when transaction is confirmed
   useEffect(() => {
@@ -221,9 +216,7 @@ export function useMatchCrossChainOrder(chainId: number) {
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();
 
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
-    hash,
-  });
+  const { isLoading: isConfirming, isSuccess } = useTxReceipt(hash);
 
   // Invalidate order caches when transaction is confirmed
   useEffect(() => {
@@ -277,9 +270,7 @@ export function useCancelCrossChainOrder(chainId: number) {
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();
 
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
-    hash,
-  });
+  const { isLoading: isConfirming, isSuccess } = useTxReceipt(hash);
 
   // Invalidate order caches when transaction is confirmed
   useEffect(() => {
@@ -339,9 +330,7 @@ export function useReactivateCrossChainOrder(chainId: number) {
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();
 
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
-    hash,
-  });
+  const { isLoading: isConfirming, isSuccess } = useTxReceipt(hash);
 
   // Invalidate order caches when transaction is confirmed
   useEffect(() => {

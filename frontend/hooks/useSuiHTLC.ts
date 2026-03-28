@@ -90,12 +90,19 @@ export function useCreateSuiHTLC() {
           [coin] = tx.splitCoins(primaryCoin, [tx.pure.u64(params.amount.toString())]);
         }
 
+        // Ensure participant address is 32-byte SUI format (pad if EVM 20-byte)
+        let participant = params.participant;
+        const rawParticipant = participant.replace('0x', '');
+        if (rawParticipant.length < 64) {
+          participant = `0x${rawParticipant.padStart(64, '0')}`;
+        }
+
         // Call create_swap function
         tx.moveCall({
           target: `${PACKAGE_ID}::htlc::create_swap`,
           arguments: [
             tx.pure.vector('u8', swapIdBytes),
-            tx.pure.address(params.participant),
+            tx.pure.address(participant),
             tx.pure.vector('u8', hashlockBytes),
             tx.pure.u64(params.timelock),
             coin,

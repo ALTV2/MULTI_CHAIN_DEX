@@ -1,6 +1,7 @@
 'use client';
 
-import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useWriteContract } from 'wagmi';
+import { useTxReceipt } from '@/hooks/useTxReceipt';
 import { useCallback } from 'react';
 import { CROSS_CHAIN_ORDER_BOOK_ABI } from '@/lib/contracts/abis/CrossChainOrderBook';
 import { getContractAddress } from '@/lib/contracts/addresses';
@@ -10,9 +11,7 @@ export function useCompleteOrder(chainId: number) {
 
   const { writeContract, data: hash, isPending, error } = useWriteContract();
 
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
-    hash,
-  });
+  const { isLoading: isConfirming, isSuccess } = useTxReceipt(hash);
 
   const completeOrder = useCallback(
     async (orderId: bigint) => {

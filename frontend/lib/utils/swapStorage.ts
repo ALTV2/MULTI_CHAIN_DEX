@@ -94,12 +94,18 @@ export function getSecret(walletAddress: string, orderId: string, sourceChainId?
   return getSwap(walletAddress, orderId, sourceChainId)?.secret;
 }
 
+/** Clear swap storage for a specific wallet address only */
+export function clearWalletSwaps(walletAddress: string): void {
+  if (typeof window === 'undefined' || !walletAddress) return;
+  const key = getStorageKey(walletAddress);
+  localStorage.removeItem(key);
+}
+
 /** Clear all swap storage across all wallet addresses */
 export function clearAllSwaps(): void {
   if (typeof window === 'undefined') return;
   const keys = Object.keys(localStorage).filter((k) => k.startsWith(STORAGE_KEY_PREFIX));
   keys.forEach((k) => localStorage.removeItem(k));
-  console.log(`🧹 Cleared all swap storage (${keys.length} wallets)`);
 }
 
 /**

@@ -11,13 +11,13 @@ import { useMatchCrossChainOrder } from '@/hooks/useCrossChainOrders';
 import { useExecuteOrder } from '@/hooks/useExecuteOrder';
 import { useCreateSuiHTLC } from '@/hooks/useSuiHTLC';
 import { useMatchSuiOrder } from '@/hooks/useSuiOrders';
-import { useFillSuiSameChainOrder, SUI_PAIR_CONFIGS } from '@/hooks/useSuiSameChainOrders';
+import { useFillSuiSameChainOrder } from '@/hooks/useSuiSameChainOrders';
+import { getKnownPairs } from '@/lib/sui/pairRegistry';
 import { useCreateHTLCSwap } from '@/hooks/useHTLC';
 import { useTokenApproval } from '@/hooks/useTokenApproval';
 import type { UnifiedOrder } from '@/hooks/useAllUnifiedOrdersFixed';
 import { getContractAddress, getChainConfig, getExplorerTxUrl } from '@/lib/contracts/addresses';
-import { isNativeToken } from '@/lib/constants/tokens';
-import { getTokenByAddress } from '@/lib/constants/tokens';
+import { isNativeToken, getTokenByAddress, evmPlaceholderToSuiToken } from '@/lib/constants/tokens';
 import { saveSwap } from '@/lib/utils/swapStorage';
 import { generateSecret, generateHashlock, generateSwapId, calculateTimelock } from '@/lib/utils/crossChainCrypto';
 import { formatAmount } from '@/lib/utils/formatAmount';
@@ -144,6 +144,8 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
         buyAmount: order.buyAmount.toString(),
         creator: order.creator,
         matcher: address,
+        targetAddress: order.targetAddress,
+        creatorSuiAddress: isSuiTarget ? order.targetAddress : undefined,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       });
@@ -213,7 +215,11 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
   if (!order) return null;
 
   const sellToken = getTokenByAddress(sourceChainId, order.sellToken);
-  const buyToken = getTokenByAddress(targetChainId, order.buyToken); // Buy token is on target chain
+  // For EVM→SUI: buyToken is an EVM placeholder — resolve back to SUI token
+  const resolvedBuyTokenAddr = isSuiTarget
+    ? evmPlaceholderToSuiToken(order.buyToken) || order.buyToken
+    : order.buyToken;
+  const buyToken = getTokenByAddress(targetChainId, resolvedBuyTokenAddr);
   const needsChainSwitch = requiredChainForMatch !== null && currentChainId !== requiredChainForMatch;
 
   // Validate SUI address format (starts with 0x, at least 1 hex char, up to 64 hex chars)
@@ -274,7 +280,7 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
           toast.error('Missing SUI order metadata');
           return;
         }
-        const pairConfig = SUI_PAIR_CONFIGS.find(
+        const pairConfig = getKnownPairs().find(
           (p) => p.pairId === order.suiSameChainMeta!.pairId
         );
         if (!pairConfig) {

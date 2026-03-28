@@ -4,9 +4,9 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   useWriteContract,
-  useWaitForTransactionReceipt,
   useChainId,
 } from 'wagmi';
+import { useTxReceipt } from '@/hooks/useTxReceipt';
 import { orderBookABI } from '@/lib/contracts/abis/OrderBook';
 import { getContractAddress } from '@/lib/contracts/addresses';
 import { parseContractError } from '@/lib/utils/errors';
@@ -21,9 +21,7 @@ export function useCancelOrder() {
   const orderBookAddress = getContractAddress(chainId, 'orderBook') as `0x${string}`;
 
   // Wait for transaction
-  const { isLoading: isWaiting, isSuccess } = useWaitForTransactionReceipt({
-    hash: txHash,
-  });
+  const { isLoading: isWaiting, isSuccess } = useTxReceipt(txHash);
 
   const mutation = useMutation({
     mutationFn: async (orderId: bigint) => {

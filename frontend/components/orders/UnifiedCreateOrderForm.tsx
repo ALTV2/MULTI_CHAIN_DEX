@@ -64,6 +64,7 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
   const isSuiOrder = isSuiSource || isSuiTarget;
   // SUI→EVM cross-chain requires BOTH wallets: SUI to create/lock, EVM as receiving address
   const isSuiToEvm = isSuiSource && !isSuiTarget && isCrossChain;
+  const isEvmToSui = !isSuiSource && isSuiTarget && isCrossChain;
 
   // Update source chain when wallet chain changes
   useEffect(() => {
@@ -187,17 +188,18 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
     setBuyToken(zeroAddress);
   }, [targetChainId]);
 
-  // Reset targetAddress when chain direction changes to avoid stale cross-chain addresses
-  useEffect(() => {
-    setTargetAddress('');
-  }, [sourceChainId, targetChainId]);
-
-  // Auto-fill target address from EVM wallet when doing SUI→EVM
+  // Auto-fill target address based on cross-chain direction
   useEffect(() => {
     if (isSuiToEvm && address) {
-      setTargetAddress(address);
+      setTargetAddress(address); // SUI→EVM: fill EVM address from MetaMask
+    } else if (isEvmToSui && suiAccount?.address) {
+      setTargetAddress(suiAccount.address); // EVM→SUI: fill SUI address from Slush
+    } else if (isCrossChain) {
+      setTargetAddress(''); // Other cross-chain: clear for manual input
+    } else {
+      setTargetAddress(''); // Same-chain: not needed
     }
-  }, [address, isSuiToEvm]);
+  }, [sourceChainId, targetChainId, address, suiAccount?.address, isSuiToEvm, isEvmToSui, isCrossChain]);
 
   // Handle cross-chain order success
   useEffect(() => {
@@ -249,7 +251,8 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
   const { needsApproval, approve, isApproving, isApproved } = useTokenApproval(
     !isCrossChain && !isNativeSell && isEvmSource ? (sellToken as `0x${string}`) : undefined,
     (orderBookAddress ?? '0x0000000000000000000000000000000000000000') as `0x${string}`,
-    parsedSellAmount
+    parsedSellAmount,
+    typeof sourceChainId === 'number' ? sourceChainId : undefined
   );
 
   const handleSwitchChains = () => {
@@ -391,11 +394,16 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
           ? (`0x${targetAddress.replace('0x', '').slice(-40).padStart(40, '0')}` as `0x${string}`)
           : ((targetAddress || address) as `0x${string}`);
 
+        const sellTokenInfo2 = getTokenByAddress(sourceChainId, sellToken);
+        const buyTokenInfo2 = isSuiTarget ? null : getTokenByAddress(targetChainId, buyToken);
+        const sellDecimals = sellTokenInfo2?.decimals ?? 18;
+        const buyDecimals = isSuiTarget ? 9 : (buyTokenInfo2?.decimals ?? 18);
+
         await createCrossChainOrder({
           sellToken: sellToken as `0x${string}`,
-          sellAmount: parseEther(sellAmount),
+          sellAmount: parseUnits(sellAmount, sellDecimals),
           buyToken: evmBuyToken,
-          buyAmount: parseEther(buyAmount),
+          buyAmount: parseUnits(buyAmount, buyDecimals),
           targetChainId: numericTargetChainId,
           targetAddress: evmTargetAddress,
           minTimelock,
@@ -411,13 +419,16 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
           toast.success('Token approved!');
         }
 
+        const scSellInfo = getTokenByAddress(sourceChainId, sellToken);
+        const scBuyInfo = getTokenByAddress(sourceChainId, buyToken);
+
         await createSameChainOrder({
           tokenToSell: sellToken as `0x${string}`,
           tokenToBuy: buyToken as `0x${string}`,
           sellAmount,
           buyAmount,
-          sellDecimals: 18,
-          buyDecimals: 18,
+          sellDecimals: scSellInfo?.decimals ?? 18,
+          buyDecimals: scBuyInfo?.decimals ?? 18,
         });
 
         // Success toast and tab switch handled in useEffect
@@ -442,7 +453,6 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
   // SUI→EVM: need both wallets
   // SUI→SUI: need SUI wallet
   // EVM→EVM: need EVM wallet
-  const isEvmToSui = !isSuiSource && isSuiTarget && isCrossChain;
   const walletConnected = isSuiToEvm
     ? !!suiAccount && isConnected
     : isEvmToSui

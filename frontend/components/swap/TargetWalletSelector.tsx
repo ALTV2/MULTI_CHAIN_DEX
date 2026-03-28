@@ -146,7 +146,7 @@ export function TargetWalletSelector({
         <div className="flex items-center gap-2 px-4 py-3 bg-light-hover dark:bg-dark-hover rounded-xl border border-light-border dark:border-dark-border">
           <div className="w-6 h-6 rounded-full bg-gradient-to-br from-accent-blue to-accent-purple flex-shrink-0" />
           <span className="text-sm font-mono text-gray-900 dark:text-white truncate">
-            {address || 'Not connected'}
+            {connectedAddress || 'Not connected'}
           </span>
         </div>
       )}

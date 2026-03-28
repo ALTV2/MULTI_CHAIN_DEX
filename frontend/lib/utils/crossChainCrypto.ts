@@ -87,19 +87,13 @@ export function generateSwapId(
  */
 function normalizeAddress(
   address: string,
-  chainId: number | string
+  _chainId: number | string
 ): `0x${string}` {
-  if (typeof chainId === 'string' && chainId.startsWith('sui:')) {
-    // SUI addresses are already 32 bytes, just ensure proper format
-    return address.startsWith('0x')
-      ? (address as `0x${string}`)
-      : (`0x${address}` as `0x${string}`);
-  } else {
-    // EVM addresses are 20 bytes, pad to 32 bytes (left-pad with zeros)
-    const cleanAddress = address.replace('0x', '');
-    const padded = cleanAddress.padStart(64, '0');
-    return `0x${padded}`;
-  }
+  // Always pad to 32 bytes regardless of chain — addresses can be EVM (20 bytes)
+  // or SUI (32 bytes). Cross-chain swaps mix both types.
+  const cleanAddress = address.replace('0x', '');
+  const padded = cleanAddress.padStart(64, '0');
+  return `0x${padded}`;
 }
 
 /**

@@ -1,108 +1,116 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import {
-  useAccount,
-  usePublicClient,
-  useWriteContract,
-  useWaitForTransactionReceipt,
-  useChainId,
-} from 'wagmi';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAccount, useWriteContract, useChainId } from 'wagmi';
 import { erc20ABI } from '@/lib/contracts/abis/ERC20';
 import { isNativeToken } from '@/lib/constants/tokens';
 import { parseContractError } from '@/lib/utils/errors';
+import { getPublicClient } from '@/lib/utils/rpcClient';
 import { maxUint256 } from 'viem';
 
+/** Poll allowance until it meets the required amount (or timeout) */
+async function pollAllowance(
+  chainId: number,
+  token: `0x${string}`,
+  owner: `0x${string}`,
+  spender: `0x${string}`,
+  requiredAmount: bigint,
+  timeoutMs = 90_000
+): Promise<boolean> {
+  const client = getPublicClient(chainId);
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const allowance = await client.readContract({
+        address: token,
+        abi: erc20ABI,
+        functionName: 'allowance',
+        args: [owner, spender],
+      }) as bigint;
+      if (allowance >= requiredAmount) return true;
+    } catch { /* ignore RPC errors, retry */ }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  return false;
+}
+
+/**
+ * @param targetChainId — the chain where the token lives (may differ from wallet's current chain)
+ */
 export function useTokenApproval(
   tokenAddress: `0x${string}` | undefined,
   spenderAddress: `0x${string}`,
-  amount: bigint
+  amount: bigint,
+  targetChainId?: number
 ) {
   const { address: userAddress } = useAccount();
-  const publicClient = usePublicClient();
   const queryClient = useQueryClient();
-  const chainId = useChainId();
-  const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
+  const walletChainId = useChainId();
+  // Use explicit targetChainId if provided, otherwise fall back to wallet chain
+  const chainId = targetChainId ?? walletChainId;
+  const [isApproving, setIsApproving] = useState(false);
 
   const { writeContractAsync } = useWriteContract();
 
-  // Check current allowance
+  // Check current allowance via our Alchemy RPC (uses the TARGET chain, not wallet chain)
   const allowanceQuery = useQuery({
-    queryKey: ['allowance', tokenAddress, userAddress, spenderAddress],
+    queryKey: ['allowance', tokenAddress, userAddress, spenderAddress, chainId],
     queryFn: async () => {
-      if (!publicClient || !userAddress || !tokenAddress || isNativeToken(chainId, tokenAddress)) {
-        return maxUint256; // ETH doesn't need approval
+      if (!userAddress || !tokenAddress || isNativeToken(chainId, tokenAddress)) {
+        return maxUint256;
       }
-
-      return publicClient.readContract({
+      const client = getPublicClient(chainId);
+      return client.readContract({
         address: tokenAddress,
         abi: erc20ABI,
         functionName: 'allowance',
         args: [userAddress, spenderAddress],
       });
     },
-    enabled:
-      !!publicClient &&
-      !!userAddress &&
-      !!tokenAddress &&
-      !isNativeToken(chainId, tokenAddress),
+    enabled: !!userAddress && !!tokenAddress && !isNativeToken(chainId, tokenAddress) && chainId > 0,
+    staleTime: 30_000,
   });
 
-  // Wait for approval transaction (only when txHash is available)
-  const { isLoading: isWaiting, isSuccess: isConfirmed } =
-    useWaitForTransactionReceipt({
-      hash: txHash,
-      query: { enabled: !!txHash },
-    });
-
-  // Invalidate allowance cache after transaction is confirmed
-  useEffect(() => {
-    if (isConfirmed && txHash) {
-      console.log('✅ Approval confirmed, invalidating allowance cache');
-
-      // Refetch allowance after successful confirmation
-      queryClient.invalidateQueries({
-        queryKey: ['allowance', tokenAddress, userAddress, spenderAddress],
-      });
-
-      // Reset txHash so we can approve again if needed
-      setTimeout(() => setTxHash(undefined), 1000);
+  const approve = async () => {
+    if (!tokenAddress || !userAddress || isNativeToken(chainId, tokenAddress)) {
+      throw new Error('Cannot approve native token');
     }
-  }, [isConfirmed, txHash, queryClient, tokenAddress, userAddress, spenderAddress]);
 
-  // Approve mutation
-  const approveMutation = useMutation({
-    mutationFn: async () => {
-      if (!tokenAddress || isNativeToken(chainId, tokenAddress)) {
-        throw new Error('Cannot approve ETH');
-      }
-
-      console.log('Approving token:', tokenAddress, 'for spender:', spenderAddress);
-
-      // Polygon requires higher gas fees (min 25 gwei tip)
-      const isPolygon = chainId === 137 || chainId === 80002; // Polygon Mainnet or Amoy testnet
+    setIsApproving(true);
+    try {
+      const isPolygon = chainId === 137 || chainId === 80002;
       const gasParams = isPolygon
-        ? {
-            maxPriorityFeePerGas: 30000000000n, // 30 gwei
-            maxFeePerGas: 50000000000n, // 50 gwei
-          }
+        ? { maxPriorityFeePerGas: 30000000000n, maxFeePerGas: 50000000000n }
         : {};
 
       const hash = await writeContractAsync({
         address: tokenAddress,
         abi: erc20ABI,
         functionName: 'approve',
-        args: [spenderAddress, maxUint256], // Approve max for better UX
+        args: [spenderAddress, maxUint256],
         gas: 100000n,
         ...gasParams,
       });
 
-      console.log('Approve tx hash:', hash);
-      setTxHash(hash);
+      // Poll allowance on the correct chain until it's sufficient (max 90s)
+      const ok = await pollAllowance(chainId, tokenAddress, userAddress, spenderAddress, amount);
+
+      // Refresh the cached allowance
+      await queryClient.invalidateQueries({
+        queryKey: ['allowance', tokenAddress, userAddress, spenderAddress, chainId],
+      });
+
+      if (!ok) {
+        throw new Error('Approval transaction may still be pending. Please try again.');
+      }
+
       return hash;
-    },
-  });
+    } finally {
+      setIsApproving(false);
+    }
+  };
 
   const allowance = allowanceQuery.data ?? 0n;
   const needsApproval =
@@ -112,13 +120,10 @@ export function useTokenApproval(
     allowance,
     needsApproval,
     isCheckingAllowance: allowanceQuery.isLoading,
-    approve: approveMutation.mutateAsync,
-    isApproving: approveMutation.isPending || isWaiting,
-    isApproved: isConfirmed || (allowance >= amount),
-    error: approveMutation.error
-      ? parseContractError(approveMutation.error)
-      : null,
+    approve,
+    isApproving,
+    isApproved: allowance >= amount,
+    error: null as string | null,
     refetchAllowance: allowanceQuery.refetch,
-    txHash,
   };
 }

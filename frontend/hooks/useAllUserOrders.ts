@@ -11,7 +11,7 @@ import { getPublicClient } from '@/lib/utils/rpcClient';
 import { ORDER_STATUS, ZERO_ADDRESS, HTLC_STATUS_MAP } from '@/lib/constants/swap';
 import { fromNumericChainId } from '@/lib/contracts/addresses';
 import { HTLC_ABI } from '@/lib/contracts/abis/HTLC';
-import { clearAllSwaps } from '@/lib/utils/swapStorage';
+import { clearWalletSwaps } from '@/lib/utils/swapStorage';
 import type { ActiveSwap, SwapPhase } from '@/types/swap';
 import { useActiveSwaps } from './useActiveSwaps';
 import { useSuiUserOrders } from './useSuiUserOrders';
@@ -114,11 +114,11 @@ export function useAllUserOrders() {
   // Track previous SUI address to detect wallet change
   const prevSuiAddressRef = useRef<string | undefined>();
 
-  // Clear all swap storage when SUI wallet changes
+  // Clear only the PREVIOUS SUI wallet's swap storage on wallet switch
   useEffect(() => {
     const lowerAddr = suiAccount?.address?.toLowerCase();
     if (prevSuiAddressRef.current !== undefined && prevSuiAddressRef.current !== lowerAddr) {
-      clearAllSwaps();
+      if (prevSuiAddressRef.current) clearWalletSwaps(prevSuiAddressRef.current);
     }
     prevSuiAddressRef.current = lowerAddr;
   }, [suiAccount?.address]);
@@ -141,8 +141,8 @@ export function useAllUserOrders() {
   } = useQuery({
     queryKey: ['userOrders', 'sameChain', address],
     queryFn: () => fetchUserSameChainOrders(address!),
-    enabled: false, // Lazy — only fetch on manual refetch()
-    staleTime: 30_000,
+    enabled: !!address,
+    staleTime: 60_000,
   });
 
   const refetch = useCallback(() => {
@@ -161,7 +161,7 @@ export function useAllUserOrders() {
 
   useEffect(() => {
     const matchedCrossChain = suiOrders.filter(
-      (o) => o.status === 'Matched' && o.targetChainId !== 0 && o.matcherHtlcSwapId
+      (o) => (o.status === 'Matched' || o.status === 'Completed') && o.targetChainId !== 0 && o.matcherHtlcSwapId
     );
     if (matchedCrossChain.length === 0) {
       setSuiEnrichMap(new Map());
@@ -264,7 +264,7 @@ export function useAllUserOrders() {
 
   useEffect(() => {
     const matchedMatcherOrders = suiMatcherOrders.filter(
-      (o) => o.status === 'Matched' && o.targetChainId !== 0 && o.matcherHtlcSwapId
+      (o) => (o.status === 'Matched' || o.status === 'Completed') && o.targetChainId !== 0 && o.matcherHtlcSwapId
     );
     if (matchedMatcherOrders.length === 0) {
       setSuiMatcherEnrichMap(new Map());
@@ -517,11 +517,12 @@ export function useAllUserOrders() {
             buyAmount: order.buyAmount.toString(),
             creator: order.creator,
             matcher: hasMatch ? order.matchedBy : undefined,
+            targetAddress: order.targetAddress,
             createdAt: Date.now(),
             updatedAt: Date.now(),
           },
           phase: (hasMatch ? 'order_matched' : 'order_created') as SwapPhase,
-          orderStatus: order.status, // Already a readable string: 'Active', 'Matched', etc.
+          orderStatus: order.status,
           expiresAt: order.expiresAt,
         };
       });

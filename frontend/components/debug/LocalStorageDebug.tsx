@@ -1,10 +1,9 @@
 'use client';
 
-import { useAccount } from 'wagmi';
+import { useAccount, usePublicClient } from 'wagmi';
 import { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { getPublicClient } from '@/lib/utils/rpcClient';
 import { getContractAddress } from '@/lib/contracts/addresses';
 import { HTLC_ABI } from '@/lib/contracts/abis/HTLC';
 
@@ -17,6 +16,7 @@ const HTLC_STATUS_MAP: Record<number, string> = {
 
 export function LocalStorageDebug() {
   const { address } = useAccount();
+  const publicClient = usePublicClient();
   const [swaps, setSwaps] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchResult, setSearchResult] = useState<string>('');
@@ -63,7 +63,8 @@ export function LocalStorageDebug() {
         return;
       }
 
-      const client = getPublicClient(targetChainId);
+      const client = publicClient;
+      if (!client) { setSearchResult('Wallet not connected'); setIsSearching(false); return; }
       const htlcAddress = getContractAddress(targetChainId, 'htlc') as `0x${string}`;
 
       // Get all swap IDs where matcher is the initiator

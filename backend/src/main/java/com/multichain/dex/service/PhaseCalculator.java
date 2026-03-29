@@ -54,16 +54,19 @@ public class PhaseCalculator {
             return SwapPhase.COMPLETED;
         }
 
-        // One withdrawn, other active → secret has been revealed
+        // One withdrawn, other active → secret has been revealed (but check expiry)
         if (cs == HtlcStatus.WITHDRAWN && ms == HtlcStatus.ACTIVE) {
-            return SwapPhase.SECRET_REVEALED;
+            return isExpired(matcherHtlc) ? SwapPhase.REFUNDABLE : SwapPhase.SECRET_REVEALED;
         }
         if (ms == HtlcStatus.WITHDRAWN && cs == HtlcStatus.ACTIVE) {
-            return SwapPhase.SECRET_REVEALED;
+            return isExpired(creatorHtlc) ? SwapPhase.REFUNDABLE : SwapPhase.SECRET_REVEALED;
         }
 
-        // Both active → both parties locked tokens
+        // Both active → both parties locked tokens (check expiry first)
         if (cs == HtlcStatus.ACTIVE && ms == HtlcStatus.ACTIVE) {
+            if (isExpired(creatorHtlc) || isExpired(matcherHtlc)) {
+                return SwapPhase.REFUNDABLE;
+            }
             return SwapPhase.MATCHER_HTLC_CREATED;
         }
 

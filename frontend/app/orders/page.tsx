@@ -13,7 +13,7 @@ import { UnifiedCreateOrderForm } from '@/components/orders/UnifiedCreateOrderFo
 import { MySwaps } from '@/components/swap/MySwaps';
 import { getTradingMode } from '@/lib/utils/tradingMode';
 import { useTranslation } from '@/hooks/useTranslation';
-import type { UnifiedOrder } from '@/hooks/useAllUnifiedOrdersFixed';
+import type { UnifiedOrder } from '@/types/order-unified';
 import { getTokensByChainId } from '@/lib/constants/tokens';
 import { LocalStorageDebug } from '@/components/debug/LocalStorageDebug';
 

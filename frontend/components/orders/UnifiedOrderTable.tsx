@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useCancelSuiOrder } from '@/hooks/useSuiOrders';
-import type { UnifiedOrder } from '@/hooks/useAllUnifiedOrdersFixed';
+import type { UnifiedOrder } from '@/types/order-unified';
 import { useOrderBook, useRefreshDexData } from '@/hooks/useDexApi';
 import { orderDtoToUnifiedOrder } from '@/lib/api/dexApiMapper';
 import { getChainConfig, getContractAddress, getExplorerTxUrl } from '@/lib/contracts/addresses';

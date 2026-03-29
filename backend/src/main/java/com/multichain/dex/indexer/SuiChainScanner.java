@@ -73,10 +73,14 @@ public class SuiChainScanner implements ChainScanner {
     @Transactional
     public void scanOrders(Chain chain) {
         try {
+            // Cross-chain orders (CCOB)
             String ccobId = chain.getContract("ccob");
             if (ccobId != null) {
                 scanSuiCcobOrders(chain, ccobId);
             }
+
+            // Same-chain orders (OrderBookPair objects)
+            scanSuiSameChainOrders(chain);
         } catch (Exception e) {
             log.error("[SUI] Failed to scan orders", e);
         }
@@ -162,6 +166,134 @@ public class SuiChainScanner implements ChainScanner {
         }
     }
 
+    // ── SUI same-chain order scanning ───────────────────────────────────
+
+    /**
+     * Scan same-chain orders from OrderBookPair shared objects.
+     * Pair configs are stored in chain.contracts["sameChainPairs"] as a JSON array.
+     */
+    @SuppressWarnings("unchecked")
+    private void scanSuiSameChainOrders(Chain chain) {
+        try {
+            // Read pair configs from chain contracts JSONB (stored as List<Map>)
+            Object pairsRaw = chain.getContractValue("sameChainPairs");
+            if (pairsRaw == null) return;
+
+            // Convert to JsonNode for uniform handling
+            JsonNode pairs = objectMapper.valueToTree(pairsRaw);
+            if (!pairs.isArray()) return;
+
+            for (JsonNode pairNode : pairs) {
+                String pairId = pairNode.path("pairId").asText(null);
+                String coinAType = pairNode.path("coinAType").asText(null);
+                String coinBType = pairNode.path("coinBType").asText(null);
+                if (pairId == null || coinAType == null || coinBType == null) continue;
+
+                try {
+                    scanSinglePairOrders(chain, pairId, coinAType, coinBType);
+                } catch (Exception e) {
+                    log.warn("[SUI] Failed to scan pair {}", pairId, e);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[SUI] Failed to scan same-chain orders", e);
+        }
+    }
+
+    private void scanSinglePairOrders(Chain chain, String pairId, String coinAType, String coinBType) throws Exception {
+        // 1. Get the orders table from the pair object
+        JsonNode pairObj = suiGetObject(chain, pairId);
+        if (pairObj == null) return;
+
+        String tableId = pairObj.at("/data/content/fields/orders/fields/id/id").asText(null);
+        if (tableId == null) return;
+
+        // 2. List all dynamic fields
+        JsonNode dynamicFields = suiGetDynamicFields(chain, tableId);
+        if (dynamicFields == null || !dynamicFields.has("data")) return;
+
+        // 3. Read each order
+        for (JsonNode field : dynamicFields.get("data")) {
+            try {
+                String fieldObjectId = field.path("objectId").asText(null);
+                if (fieldObjectId == null) continue;
+
+                // Get the field object which contains the order object address
+                JsonNode fieldObj = suiGetObject(chain, fieldObjectId);
+                if (fieldObj == null) continue;
+
+                String orderAddress = fieldObj.at("/data/content/fields/value").asText(null);
+                if (orderAddress == null) continue;
+
+                // Get the actual order object
+                JsonNode orderObj = suiGetObject(chain, orderAddress);
+                if (orderObj == null) continue;
+
+                JsonNode orderFields = orderObj.at("/data/content/fields");
+                if (orderFields.isMissingNode()) continue;
+
+                upsertSuiSameChainOrder(chain, orderAddress, orderFields, pairId, coinAType, coinBType);
+            } catch (Exception e) {
+                log.trace("[SUI] Failed to read same-chain order", e);
+            }
+        }
+    }
+
+    private void upsertSuiSameChainOrder(Chain chain, String orderObjectId, JsonNode fields,
+                                          String pairId, String coinAType, String coinBType) {
+        String orderId = fields.path("order_id").asText(null);
+        if (orderId == null) orderId = orderObjectId; // fallback
+
+        // Use "sc-{pairId short}-{orderId}" as unique identifier to avoid collisions with CCOB orders
+        String uniqueOrderId = "sc-" + pairId.substring(2, 8) + "-" + orderId;
+
+        var existing = orderRepo.findBySourceChain_IdAndOnChainOrderId(chain.getId(), uniqueOrderId);
+
+        int statusNum = fields.path("status").asInt(0);
+        // SUI same-chain: 0=Active, 1=Filled, 2=Cancelled
+        OrderStatus status = switch (statusNum) {
+            case 1 -> OrderStatus.COMPLETED;
+            case 2 -> OrderStatus.CANCELLED;
+            default -> OrderStatus.ACTIVE;
+        };
+
+        if (existing.isPresent() && existing.get().getStatus().isTerminal()) return;
+
+        Token sellToken = resolveToken(chain.getId(), coinAType);
+        Token buyToken = resolveToken(chain.getId(), coinBType);
+
+        // Build suiSameChainMeta
+        Map<String, String> meta = Map.of(
+                "orderObjectId", orderObjectId,
+                "coinAType", coinAType,
+                "coinBType", coinBType,
+                "pairId", pairId
+        );
+
+        Order order = existing.orElseGet(() -> Order.builder()
+                .sourceChain(chain)
+                .onChainOrderId(uniqueOrderId)
+                .orderType(OrderType.SAME_CHAIN)
+                .creator(fields.path("creator").asText(""))
+                .sellToken(sellToken)
+                .sellAmount(new BigInteger(fields.path("sell_amount").asText("0")))
+                .buyToken(buyToken)
+                .buyAmount(new BigInteger(fields.path("buy_amount").asText("0")))
+                .suiSameChainMeta(meta)
+                .build());
+
+        order.setStatus(status);
+        order.setSuiSameChainMeta(meta);
+
+        if (status == OrderStatus.COMPLETED && order.getCompletedAt() == null) {
+            order.setCompletedAt(Instant.now());
+        }
+
+        orderRepo.save(order);
+    }
+
+    // ── SUI CCOB order upsert ─────────────────────────────────────────────
+
     private void upsertSuiOrder(Chain chain, String orderId, JsonNode fields) {
         var existing = orderRepo.findBySourceChain_IdAndOnChainOrderId(chain.getId(), orderId);
 
@@ -228,6 +360,15 @@ public class SuiChainScanner implements ChainScanner {
 
         if (result == null || !result.has("data")) return;
 
+        // Update cursor FIRST (even if processing fails) to prevent infinite replay
+        try {
+            if (result.has("nextCursor") && !result.get("nextCursor").isNull()) {
+                chain.setLastEventCursor(result.get("nextCursor").asText());
+            }
+        } catch (Exception e) {
+            log.warn("[SUI] Failed to update created event cursor", e);
+        }
+
         for (JsonNode event : result.get("data")) {
             try {
                 JsonNode parsed = event.path("parsedJson");
@@ -280,10 +421,6 @@ public class SuiChainScanner implements ChainScanner {
             }
         }
 
-        // Update cursor
-        if (result.has("nextCursor") && !result.get("nextCursor").isNull()) {
-            chain.setLastEventCursor(result.get("nextCursor").asText());
-        }
     }
 
     private void scanSwapWithdrawnEvents(Chain chain, String htlcPackage) throws Exception {
@@ -291,6 +428,15 @@ public class SuiChainScanner implements ChainScanner {
         JsonNode result = suiQueryEvents(chain, eventType, chain.getLastWithdrawnCursor());
 
         if (result == null || !result.has("data")) return;
+
+        // Update cursor FIRST to prevent infinite replay
+        try {
+            if (result.has("nextCursor") && !result.get("nextCursor").isNull()) {
+                chain.setLastWithdrawnCursor(result.get("nextCursor").asText());
+            }
+        } catch (Exception e) {
+            log.warn("[SUI] Failed to update withdrawn event cursor", e);
+        }
 
         for (JsonNode event : result.get("data")) {
             try {
@@ -315,10 +461,6 @@ public class SuiChainScanner implements ChainScanner {
             }
         }
 
-        // Update withdrawn cursor separately from created cursor
-        if (result.has("nextCursor") && !result.get("nextCursor").isNull()) {
-            chain.setLastWithdrawnCursor(result.get("nextCursor").asText());
-        }
     }
 
     // ── SUI HTLC status polling ───────────────────────────────────────────

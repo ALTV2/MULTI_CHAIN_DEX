@@ -6,6 +6,7 @@ import {
   useWriteContract,
   useChainId,
   useAccount,
+  usePublicClient,
 } from 'wagmi';
 import { useTxReceipt } from '@/hooks/useTxReceipt';
 import { tradeABI } from '@/lib/contracts/abis/Trade';
@@ -13,7 +14,7 @@ import { erc20Abi } from 'viem';
 import { getContractAddress } from '@/lib/contracts/addresses';
 import { isNativeToken } from '@/lib/constants/tokens';
 import { parseContractError } from '@/lib/utils/errors';
-import { getPublicClient } from '@/lib/utils/rpcClient';
+// No direct Alchemy/RPC — uses wagmi publicClient via wallet
 
 interface ExecuteOrderParams {
   orderId: bigint;
@@ -24,6 +25,7 @@ interface ExecuteOrderParams {
 export function useExecuteOrder() {
   const chainId = useChainId();
   const { address } = useAccount();
+  const publicClient = usePublicClient();
   const queryClient = useQueryClient();
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
 
@@ -53,10 +55,10 @@ export function useExecuteOrder() {
       if (!isNativeToken(chainId, tokenToBuy) && address) {
         console.log('Checking allowance for token:', tokenToBuy);
 
-        const client = getPublicClient(chainId);
+        if (!publicClient) throw new Error('Wallet not connected');
 
         // Check current allowance
-        const allowance = await client.readContract({
+        const allowance = await publicClient.readContract({
           address: tokenToBuy,
           abi: erc20Abi,
           functionName: 'allowance',
@@ -80,11 +82,9 @@ export function useExecuteOrder() {
           console.log('Approve tx:', approveHash);
 
           // Wait for approve transaction to complete
-          const approveReceipt = await client.waitForTransactionReceipt({
+          const approveReceipt = await publicClient.waitForTransactionReceipt({
             hash: approveHash,
           });
-
-          console.log('Approve confirmed:', approveReceipt.status);
 
           if (approveReceipt.status !== 'success') {
             throw new Error('Approve transaction failed');

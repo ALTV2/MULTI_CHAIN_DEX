@@ -19,6 +19,19 @@ public interface OrderRepository extends JpaRepository<Order, UUID>, JpaSpecific
 
     Optional<Order> findBySourceChain_IdAndOnChainOrderId(String sourceChainId, String onChainOrderId);
 
+    /** Find a matched cross-chain order by creator+matcher addresses (case-insensitive). */
+    @Query("""
+        SELECT o FROM Order o
+        WHERE o.orderType = 'CROSS_CHAIN'
+          AND o.status = 'MATCHED'
+          AND (
+            (LOWER(o.creator) = LOWER(:addr1) AND LOWER(o.matcher) = LOWER(:addr2))
+            OR (LOWER(o.creator) = LOWER(:addr2) AND LOWER(o.matcher) = LOWER(:addr1))
+          )
+        ORDER BY o.matchedAt DESC
+        """)
+    List<Order> findMatchedByAddresses(@Param("addr1") String addr1, @Param("addr2") String addr2);
+
     /** Orders that are not in a terminal phase — candidates for phase recomputation. */
     @Query("SELECT o FROM Order o WHERE o.phase NOT IN :terminalPhases")
     List<Order> findByPhaseNotIn(@Param("terminalPhases") Collection<SwapPhase> terminalPhases);

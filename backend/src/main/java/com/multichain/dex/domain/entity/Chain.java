@@ -49,10 +49,10 @@ public class Chain {
     @Column(name = "native_decimals", nullable = false)
     private int nativeDecimals;
 
-    /** Contract addresses: {"orderBook":"0x...", "htlc":"0x...", "ccob":"0x..."} */
+    /** Contract addresses and config: {"orderBook":"0x...", "sameChainPairs":[...]} */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(nullable = false)
-    private Map<String, String> contracts;
+    private Map<String, Object> contracts;
 
     @Column(name = "polling_enabled", nullable = false)
     @Builder.Default
@@ -85,6 +85,13 @@ public class Chain {
 
     /** Helper: get a contract address by key, e.g. "htlc", "ccob", "orderBook". */
     public String getContract(String key) {
+        if (contracts == null) return null;
+        Object val = contracts.get(key);
+        return val instanceof String ? (String) val : (val != null ? val.toString() : null);
+    }
+
+    /** Helper: get a complex value (e.g. JSON array) by key. */
+    public Object getContractValue(String key) {
         return contracts != null ? contracts.get(key) : null;
     }
 

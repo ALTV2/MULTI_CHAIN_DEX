@@ -6,6 +6,7 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.MathContext;
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -31,7 +32,8 @@ public record OrderResponse(
         Long expiresAt,
         Instant createdAt,
         Instant matchedAt,
-        Instant completedAt
+        Instant completedAt,
+        Map<String, String> suiSameChainMeta
 ) {
     public static OrderResponse from(Order order) {
         var sellToken = order.getSellToken();
@@ -57,7 +59,8 @@ public record OrderResponse(
                 order.getExpiresAt() != null ? order.getExpiresAt().getEpochSecond() : null,
                 order.getCreatedAt(),
                 order.getMatchedAt(),
-                order.getCompletedAt()
+                order.getCompletedAt(),
+                order.getSuiSameChainMeta()
         );
     }
 

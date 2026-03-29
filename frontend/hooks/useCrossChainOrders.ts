@@ -1,12 +1,11 @@
 'use client';
 
-import { useWriteContract, useAccount } from 'wagmi';
+import { useWriteContract, useAccount, usePublicClient } from 'wagmi';
 import { useTxReceipt } from '@/hooks/useTxReceipt';
 import { useCallback, useMemo, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CROSS_CHAIN_ORDER_BOOK_ABI } from '@/lib/contracts/abis/CrossChainOrderBook';
 import { getContractAddress, chainConfig, SupportedChainId } from '@/lib/contracts/addresses';
-import { getPublicClient } from '@/lib/utils/rpcClient';
 
 export type CrossChainOrderStatus = 'Active' | 'Matched' | 'Completed' | 'Cancelled' | 'Expired';
 
@@ -56,13 +55,14 @@ function mapOrder(data: any): CrossChainOrder {
 
 export function useCrossChainOrdersForTarget(sourceChainId: number, targetChainId: number) {
   const ccobAddress = getContractAddress(sourceChainId, 'crossChainOrderBook') as `0x${string}`;
+  const publicClient = usePublicClient({ chainId: sourceChainId });
 
   const query = useQuery({
     queryKey: ['crossChainOrders', sourceChainId, targetChainId],
     networkMode: 'offlineFirst',
     queryFn: async (): Promise<any[]> => {
-      const client = getPublicClient(sourceChainId);
-      const data = await client.readContract({
+      if (!publicClient) return [];
+      const data = await publicClient.readContract({
         address: ccobAddress,
         abi: CROSS_CHAIN_ORDER_BOOK_ABI,
         functionName: 'getActiveOrdersForTargetChain',
@@ -95,17 +95,16 @@ export function useCrossChainOrdersForTarget(sourceChainId: number, targetChainI
 
 export function useMyeCrossChainOrders(chainId: number) {
   const { address } = useAccount();
+  const publicClient = usePublicClient({ chainId });
   const ccobAddress = getContractAddress(chainId, 'crossChainOrderBook') as `0x${string}`;
 
   const query = useQuery({
     queryKey: ['myeCrossChainOrders', chainId, address],
-    networkMode: 'offlineFirst', // Don't cancel based on network status
+    networkMode: 'offlineFirst',
     queryFn: async (): Promise<any[]> => {
-      if (!address) return [];
+      if (!address || !publicClient) return [];
 
-      const client = getPublicClient(chainId);
-
-      const data = await client.readContract({
+      const data = await publicClient.readContract({
         address: ccobAddress,
         abi: CROSS_CHAIN_ORDER_BOOK_ABI,
         functionName: 'getOrdersByCreator',

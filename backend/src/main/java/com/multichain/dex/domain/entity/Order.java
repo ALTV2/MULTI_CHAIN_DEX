@@ -5,9 +5,12 @@ import com.multichain.dex.domain.enums.OrderType;
 import com.multichain.dex.domain.enums.SwapPhase;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.math.BigInteger;
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -84,6 +87,11 @@ public class Order {
     @Column(nullable = false, length = 30)
     @Builder.Default
     private SwapPhase phase = SwapPhase.ORDER_CREATED;
+
+    /** SUI same-chain metadata: {"orderObjectId":"0x...", "coinAType":"...", "coinBType":"...", "pairId":"..."} */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "sui_same_chain_meta")
+    private Map<String, String> suiSameChainMeta;
 
     /** Transaction hash for same-chain direct execution via Trade contract. */
     @Column(name = "execution_tx_hash", length = 100)

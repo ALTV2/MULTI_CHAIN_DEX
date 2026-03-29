@@ -11,3 +11,9 @@ databaseChangeLog:
   - include:
       file: db/changelog/v4_nullable_token_ids.sql
       relativeToChangelogFile: false
+  - include:
+      file: db/changelog/v5_sui_same_chain_meta.sql
+      relativeToChangelogFile: false
+  - include:
+      file: db/changelog/v6_sui_pairs.sql
+      relativeToChangelogFile: false

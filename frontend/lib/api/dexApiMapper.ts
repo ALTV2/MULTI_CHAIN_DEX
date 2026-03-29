@@ -89,6 +89,8 @@ export function orderDtoToActiveSwap(dto: OrderDto, role: 'creator' | 'matcher' 
 
 /** Convert OrderDto to UnifiedOrder for UnifiedOrderTable compatibility. */
 export function orderDtoToUnifiedOrder(dto: OrderDto): any {
+  // SUI same-chain metadata from backend (if available)
+  const suiMeta = (dto as any).suiSameChainMeta;
   const sourceChainId = parseChainId(dto.sourceChainId);
   const targetChainId = dto.targetChainId ? parseChainId(dto.targetChainId) : sourceChainId;
 
@@ -120,8 +122,13 @@ export function orderDtoToUnifiedOrder(dto: OrderDto): any {
     sourceChainIdNum: sourceChainId,
     targetChainIdNum: targetChainId,
     orderType: dto.orderType,
-    // SUI same-chain meta (if applicable)
-    suiSameChainMeta: undefined,
+    // SUI same-chain meta from backend (if available)
+    suiSameChainMeta: suiMeta ? {
+      orderObjectId: suiMeta.orderObjectId || '',
+      coinAType: suiMeta.coinAType || '',
+      coinBType: suiMeta.coinBType || '',
+      pairId: suiMeta.pairId || '',
+    } : undefined,
   };
 }
 

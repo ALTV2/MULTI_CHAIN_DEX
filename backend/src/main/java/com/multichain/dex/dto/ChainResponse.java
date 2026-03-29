@@ -12,7 +12,7 @@ public record ChainResponse(
         String blockExplorer,
         String nativeSymbol,
         int nativeDecimals,
-        Map<String, String> contracts
+        Map<String, Object> contracts
 ) {
     public static ChainResponse from(Chain chain) {
         return new ChainResponse(

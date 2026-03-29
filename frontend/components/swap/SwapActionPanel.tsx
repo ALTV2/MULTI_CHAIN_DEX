@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useAccount, useChainId, useSwitchChain, useWriteContract } from 'wagmi';
+import { useAccount, useChainId, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi';
 import { useTxReceipt } from '@/hooks/useTxReceipt';
 import { useCurrentAccount } from '@mysten/dapp-kit';
 import { Button } from '@/components/ui/Button';
@@ -23,10 +23,17 @@ import { orderBookABI } from '@/lib/contracts/abis/OrderBook';
 import { CROSS_CHAIN_ORDER_BOOK_ABI } from '@/lib/contracts/abis/CrossChainOrderBook';
 import { HTLC_ABI } from '@/lib/contracts/abis/HTLC';
 import type { ActiveSwap } from '@/types/swap';
-import type { DetectedHTLC } from '@/hooks/useDetectCrossChainHTLC';
+/** Detected HTLC data — inlined to remove dependency on old hook. */
+interface DetectedHTLC {
+  swapId: `0x${string}`;
+  hashlock: `0x${string}`;
+  timelock: bigint;
+  amount: bigint;
+  htlcObjectId?: string;
+}
 import { useSettingsStore } from '@/stores/useSettingsStore';
 import { toast } from 'sonner';
-import { getPublicClient } from '@/lib/utils/rpcClient';
+
 
 /**
  * Validate that a secret matches the expected hashlock before sending an on-chain transaction.
@@ -54,6 +61,7 @@ interface SwapActionPanelProps {
 export function SwapActionPanel({ swap, onUpdate, detectedHTLC }: SwapActionPanelProps) {
   const { address } = useAccount();
   const evmChainId = useChainId();
+  const publicClient = usePublicClient();
   const suiAccount = useCurrentAccount();
   const { switchChainAsync } = useSwitchChain();
   const { meta, phase, orderStatus, expiresAt } = swap;
@@ -185,6 +193,7 @@ function WaitingMessage({ text }: { text: string }) {
 
 function OrderCreatedAction({ swap, onUpdate, detectedHTLC }: { swap: ActiveSwap; onUpdate?: () => void; detectedHTLC?: DetectedHTLC | null }) {
   const { address } = useAccount();
+  const publicClient = usePublicClient();
   const suiAccount = useCurrentAccount();
   const isSameChain = swap.meta.sourceChainId === swap.meta.targetChainId;
   const evmChainId = useChainId();
@@ -262,8 +271,8 @@ function OrderCreatedAction({ swap, onUpdate, detectedHTLC }: { swap: ActiveSwap
       const abi = isSameChain ? orderBookABI : CROSS_CHAIN_ORDER_BOOK_ABI;
 
       // Check order status before cancellation
-      const client = getPublicClient(orderChainId as number);
-      const orderData = await client.readContract({
+      if (!publicClient) throw new Error('Public client not available. Please connect your wallet.');
+      const orderData = await publicClient.readContract({
         address: contractAddress,
         abi,
         functionName: 'getOrder',
@@ -569,6 +578,7 @@ function CreateCounterHTLCAction({
  */
 function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () => void }) {
   const { address } = useAccount();
+  const publicClient = usePublicClient();
   const { meta, phase } = swap;
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<'idle' | 'approving' | 'locking' | 'done'>('idle');
@@ -618,8 +628,8 @@ function CreatorLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
 
     try {
       const contractAddress = getContractAddress(sourceChainId, 'crossChainOrderBook') as `0x${string}`;
-      const client = getPublicClient(sourceChainId);
-      const orderData = await client.readContract({
+      if (!publicClient) throw new Error('Public client not available. Please connect your wallet.');
+      const orderData = await publicClient.readContract({
         address: contractAddress,
         abi: CROSS_CHAIN_ORDER_BOOK_ABI,
         functionName: 'getOrder',
@@ -1482,6 +1492,7 @@ function RefundAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () => vo
  */
 function SuiSourceCreatorCounterHTLCAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () => void }) {
   const { address } = useAccount();
+  const publicClient = usePublicClient();
   const suiAccount = useCurrentAccount();
   const { meta } = swap;
   const [hashlock, setHashlock] = useState<string | null>(null);
@@ -1499,9 +1510,9 @@ function SuiSourceCreatorCounterHTLCAction({ swap, onUpdate }: { swap: ActiveSwa
 
     const fetchHashlock = async () => {
       try {
-        const client = getPublicClient(targetChainId);
+        if (!publicClient) return;
         const htlcAddress = getContractAddress(targetChainId, 'htlc') as `0x${string}`;
-        const swapData = await client.readContract({
+        const swapData = await publicClient.readContract({
           address: htlcAddress,
           abi: HTLC_ABI,
           functionName: 'getSwap',

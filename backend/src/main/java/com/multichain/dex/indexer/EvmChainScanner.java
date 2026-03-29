@@ -16,7 +16,11 @@ import org.web3j.abi.*;
 import org.web3j.abi.datatypes.*;
 import org.web3j.abi.datatypes.generated.*;
 import org.web3j.protocol.Web3j;
+import org.web3j.protocol.core.DefaultBlockParameter;
 import org.web3j.protocol.core.DefaultBlockParameterName;
+import org.web3j.protocol.core.methods.request.EthFilter;
+import org.web3j.protocol.core.methods.response.EthLog;
+import org.web3j.protocol.core.methods.response.Log;
 import org.web3j.protocol.core.methods.response.TransactionReceipt;
 import org.web3j.protocol.http.HttpService;
 
@@ -92,6 +96,19 @@ public class EvmChainScanner implements ChainScanner {
             String htlcAddr = chain.getContract("htlc");
             if (htlcAddr == null) return;
 
+            BigInteger latestBlock = retryRpc(() -> web3j.ethBlockNumber().send().getBlockNumber());
+            long fromBlock = Math.max(chain.getLastIndexedBlock() + 1, latestBlock.longValue() - 10000);
+
+            // 1. Discover NEW HTLCs from SwapCreated events
+            scanSwapCreatedEvents(chain, web3j, htlcAddr, fromBlock, latestBlock.longValue());
+
+            // 2. Extract secrets from SwapWithdrawn events
+            scanSwapWithdrawnEvents(chain, web3j, htlcAddr, fromBlock, latestBlock.longValue());
+
+            // 3. Detect refunds from SwapRefunded events
+            scanSwapRefundedEvents(chain, web3j, htlcAddr, fromBlock, latestBlock.longValue());
+
+            // 4. Poll existing ACTIVE HTLCs for status changes (fallback)
             List<HtlcSwap> activeHtlcs = htlcRepo.findByChainIdAndStatus(chain.getId(), HtlcStatus.ACTIVE);
             for (HtlcSwap htlc : activeHtlcs) {
                 if (htlc.getOnChainSwapId() == null) continue;
@@ -101,6 +118,8 @@ public class EvmChainScanner implements ChainScanner {
                     log.warn("[EVM:{}] Failed to update HTLC {}", chain.getId(), htlc.getOnChainSwapId(), e);
                 }
             }
+
+            chain.setLastIndexedBlock(latestBlock.longValue());
         } catch (Exception e) {
             log.error("[EVM:{}] Failed to scan HTLCs", chain.getId(), e);
         }
@@ -204,7 +223,243 @@ public class EvmChainScanner implements ChainScanner {
         }
     }
 
-    // ── HTLC status update ────────────────────────────────────────────────
+    // ── EVM HTLC event scanning ─────────────────────────────────────────
+
+    // keccak256("SwapCreated(bytes32,address,address,address,uint256,bytes32,uint256)")
+    private static final String SWAP_CREATED_TOPIC = EventEncoder.encode(
+            new Event("SwapCreated", List.of(
+                    new TypeReference<Bytes32>(true) {},
+                    new TypeReference<Address>(true) {},
+                    new TypeReference<Address>(true) {},
+                    new TypeReference<Address>() {},
+                    new TypeReference<Uint256>() {},
+                    new TypeReference<Bytes32>() {},
+                    new TypeReference<Uint256>() {}
+            ))
+    );
+
+    // keccak256("SwapWithdrawn(bytes32,bytes32,address)")
+    private static final String SWAP_WITHDRAWN_TOPIC = EventEncoder.encode(
+            new Event("SwapWithdrawn", List.of(
+                    new TypeReference<Bytes32>(true) {},
+                    new TypeReference<Bytes32>() {},
+                    new TypeReference<Address>(true) {}
+            ))
+    );
+
+    // keccak256("SwapRefunded(bytes32,address)")
+    private static final String SWAP_REFUNDED_TOPIC = EventEncoder.encode(
+            new Event("SwapRefunded", List.of(
+                    new TypeReference<Bytes32>(true) {},
+                    new TypeReference<Address>(true) {}
+            ))
+    );
+
+    /**
+     * Discover new HTLCs from SwapCreated events.
+     * Links each HTLC to an order via hashlock matching.
+     */
+    private void scanSwapCreatedEvents(Chain chain, Web3j web3j, String htlcAddr,
+                                        long fromBlock, long toBlock) {
+        try {
+            EthFilter filter = new EthFilter(
+                    DefaultBlockParameter.valueOf(BigInteger.valueOf(fromBlock)),
+                    DefaultBlockParameter.valueOf(BigInteger.valueOf(toBlock)),
+                    htlcAddr
+            );
+            filter.addSingleTopic(SWAP_CREATED_TOPIC);
+
+            List<EthLog.LogResult> logs = retryRpc(() -> web3j.ethGetLogs(filter).send().getLogs());
+            if (logs == null || logs.isEmpty()) return;
+
+            int discovered = 0;
+            for (EthLog.LogResult logResult : logs) {
+                try {
+                    Log logEntry = (Log) logResult.get();
+
+                    // Indexed params from topics: swapId (topic1), initiator (topic2), participant (topic3)
+                    String swapId = logEntry.getTopics().get(1);
+                    String initiator = "0x" + logEntry.getTopics().get(2).substring(26);
+                    String participant = "0x" + logEntry.getTopics().get(3).substring(26);
+
+                    // Non-indexed params from data: token, amount, hashlock, timelock
+                    String data = logEntry.getData();
+                    @SuppressWarnings("rawtypes")
+                    List<Type> decoded = FunctionReturnDecoder.decode(data,
+                            org.web3j.abi.Utils.convert(List.of(
+                                    new TypeReference<Address>() {},
+                                    new TypeReference<Uint256>() {},
+                                    new TypeReference<Bytes32>() {},
+                                    new TypeReference<Uint256>() {}
+                            )));
+                    if (decoded.size() < 4) continue;
+
+                    String tokenAddr = ((Address) decoded.get(0)).getValue();
+                    BigInteger amount = ((Uint256) decoded.get(1)).getValue();
+                    String hashlock = "0x" + org.web3j.utils.Numeric.toHexStringNoPrefixZeroPadded(
+                            new BigInteger(1, ((Bytes32) decoded.get(2)).getValue()), 64);
+                    BigInteger timelock = ((Uint256) decoded.get(3)).getValue();
+
+                    // Skip if HTLC already exists in DB
+                    if (htlcRepo.findByOnChainSwapId(swapId).isPresent()) continue;
+
+                    // Link to order: try hashlock first, then address matching
+                    Order linkedOrder = htlcRepo.findFirstByHashlockIgnoreCase(hashlock)
+                            .map(HtlcSwap::getOrder)
+                            .orElse(null);
+
+                    // Fallback: find matched order by initiator/participant addresses
+                    if (linkedOrder == null) {
+                        var candidates = orderRepo.findMatchedByAddresses(initiator, participant);
+                        // Pick the first candidate that doesn't already have this role's HTLC
+                        for (var candidate : candidates) {
+                            HtlcRole candidateRole = initiator.equalsIgnoreCase(candidate.getCreator())
+                                    ? HtlcRole.CREATOR : HtlcRole.MATCHER;
+                            if (htlcRepo.findByOrderIdAndRole(candidate.getId(), candidateRole).isEmpty()) {
+                                linkedOrder = candidate;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (linkedOrder == null) continue;
+
+                    // Determine role: initiator == order creator → CREATOR, else MATCHER
+                    HtlcRole role = initiator.equalsIgnoreCase(linkedOrder.getCreator())
+                            ? HtlcRole.CREATOR : HtlcRole.MATCHER;
+
+                    // Don't create duplicate
+                    if (htlcRepo.findByOrderIdAndRole(linkedOrder.getId(), role).isPresent()) continue;
+
+                    Token token = resolveToken(chain.getId(), tokenAddr);
+
+                    HtlcSwap htlc = HtlcSwap.builder()
+                            .order(linkedOrder)
+                            .role(role)
+                            .chain(chain)
+                            .onChainSwapId(swapId)
+                            .initiator(initiator)
+                            .participant(participant)
+                            .token(token)
+                            .amount(amount)
+                            .hashlock(hashlock)
+                            .timelock(Instant.ofEpochSecond(timelock.longValue()))
+                            .status(HtlcStatus.ACTIVE)
+                            .creationTxHash(logEntry.getTransactionHash())
+                            .build();
+
+                    htlcRepo.save(htlc);
+                    discovered++;
+                    log.info("[EVM:{}] Discovered HTLC {} for order {} (role={})",
+                            chain.getId(), swapId, linkedOrder.getOnChainOrderId(), role);
+
+                } catch (Exception e) {
+                    log.trace("[EVM:{}] Failed to process SwapCreated event", chain.getId(), e);
+                }
+            }
+
+            if (discovered > 0) {
+                log.info("[EVM:{}] Discovered {} new HTLC(s) from events", chain.getId(), discovered);
+            }
+        } catch (Exception e) {
+            log.warn("[EVM:{}] Failed to scan SwapCreated events", chain.getId(), e);
+        }
+    }
+
+    /**
+     * Extract revealed secrets from SwapWithdrawn events.
+     */
+    private void scanSwapWithdrawnEvents(Chain chain, Web3j web3j, String htlcAddr,
+                                          long fromBlock, long toBlock) {
+        try {
+            EthFilter filter = new EthFilter(
+                    DefaultBlockParameter.valueOf(BigInteger.valueOf(fromBlock)),
+                    DefaultBlockParameter.valueOf(BigInteger.valueOf(toBlock)),
+                    htlcAddr
+            );
+            filter.addSingleTopic(SWAP_WITHDRAWN_TOPIC);
+
+            List<EthLog.LogResult> logs = retryRpc(() -> web3j.ethGetLogs(filter).send().getLogs());
+            if (logs == null || logs.isEmpty()) return;
+
+            for (EthLog.LogResult logResult : logs) {
+                try {
+                    Log logEntry = (Log) logResult.get();
+                    String swapId = logEntry.getTopics().get(1);
+
+                    var htlcOpt = htlcRepo.findByOnChainSwapId(swapId);
+                    if (htlcOpt.isEmpty()) continue;
+
+                    HtlcSwap htlc = htlcOpt.get();
+                    if (htlc.getStatus() != HtlcStatus.ACTIVE) continue;
+
+                    // Extract secret from non-indexed data
+                    @SuppressWarnings("rawtypes")
+                    List<Type> decoded = FunctionReturnDecoder.decode(logEntry.getData(),
+                            org.web3j.abi.Utils.convert(List.of(new TypeReference<Bytes32>() {})));
+
+                    if (!decoded.isEmpty()) {
+                        String secret = "0x" + org.web3j.utils.Numeric.toHexStringNoPrefixZeroPadded(
+                                new BigInteger(1, ((Bytes32) decoded.get(0)).getValue()), 64);
+                        htlc.setSecret(secret);
+                    }
+
+                    htlc.setStatus(HtlcStatus.WITHDRAWN);
+                    htlc.setWithdrawTxHash(logEntry.getTransactionHash());
+                    htlcRepo.save(htlc);
+
+                    log.info("[EVM:{}] HTLC {} withdrawn, secret revealed", chain.getId(), swapId);
+                } catch (Exception e) {
+                    log.trace("[EVM:{}] Failed to process SwapWithdrawn event", chain.getId(), e);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[EVM:{}] Failed to scan SwapWithdrawn events", chain.getId(), e);
+        }
+    }
+
+    /**
+     * Detect refunded HTLCs from SwapRefunded events.
+     */
+    private void scanSwapRefundedEvents(Chain chain, Web3j web3j, String htlcAddr,
+                                         long fromBlock, long toBlock) {
+        try {
+            EthFilter filter = new EthFilter(
+                    DefaultBlockParameter.valueOf(BigInteger.valueOf(fromBlock)),
+                    DefaultBlockParameter.valueOf(BigInteger.valueOf(toBlock)),
+                    htlcAddr
+            );
+            filter.addSingleTopic(SWAP_REFUNDED_TOPIC);
+
+            List<EthLog.LogResult> logs = retryRpc(() -> web3j.ethGetLogs(filter).send().getLogs());
+            if (logs == null || logs.isEmpty()) return;
+
+            for (EthLog.LogResult logResult : logs) {
+                try {
+                    Log logEntry = (Log) logResult.get();
+                    String swapId = logEntry.getTopics().get(1);
+
+                    var htlcOpt = htlcRepo.findByOnChainSwapId(swapId);
+                    if (htlcOpt.isEmpty()) continue;
+
+                    HtlcSwap htlc = htlcOpt.get();
+                    if (htlc.getStatus() != HtlcStatus.ACTIVE) continue;
+
+                    htlc.setStatus(HtlcStatus.REFUNDED);
+                    htlc.setRefundTxHash(logEntry.getTransactionHash());
+                    htlcRepo.save(htlc);
+
+                    log.info("[EVM:{}] HTLC {} refunded", chain.getId(), swapId);
+                } catch (Exception e) {
+                    log.trace("[EVM:{}] Failed to process SwapRefunded event", chain.getId(), e);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[EVM:{}] Failed to scan SwapRefunded events", chain.getId(), e);
+        }
+    }
+
+    // ── HTLC status update (fallback polling) ─────────────────────────────
 
     private void updateHtlcStatus(Web3j web3j, String htlcAddr, HtlcSwap htlc) throws Exception {
         String data = FunctionEncoder.encode(new Function(
@@ -234,10 +489,33 @@ public class EvmChainScanner implements ChainScanner {
         int statusInt = ((Uint8) decoded.get(6)).getValue().intValue();
         HtlcStatus newStatus = HTLC_STATUS_MAP.getOrDefault(statusInt, null);
 
+        // Always sync hashlock, amount, timelock from chain (may be missing on first discovery)
+        boolean changed = false;
+
         if (newStatus != null && newStatus != htlc.getStatus()) {
             log.info("[EVM] HTLC {} status: {} → {}", htlc.getOnChainSwapId(), htlc.getStatus(), newStatus);
             htlc.setStatus(newStatus);
-            htlc.setTimelock(Instant.ofEpochSecond(((Uint256) decoded.get(5)).getValue().longValue()));
+            changed = true;
+        }
+
+        // Extract and persist hashlock if missing
+        String hashlock = "0x" + org.web3j.utils.Numeric.toHexStringNoPrefixZeroPadded(
+                new BigInteger(1, ((Bytes32) decoded.get(4)).getValue()), 64);
+        if (htlc.getHashlock() == null || htlc.getHashlock().isEmpty()) {
+            htlc.setHashlock(hashlock);
+            changed = true;
+        }
+
+        // Sync amount and timelock
+        BigInteger amount = ((Uint256) decoded.get(3)).getValue();
+        if (htlc.getAmount() == null || !htlc.getAmount().equals(amount)) {
+            htlc.setAmount(amount);
+            changed = true;
+        }
+        Instant timelock = Instant.ofEpochSecond(((Uint256) decoded.get(5)).getValue().longValue());
+        htlc.setTimelock(timelock);
+
+        if (changed) {
             htlcRepo.save(htlc);
         }
     }

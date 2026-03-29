@@ -6,15 +6,26 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api/v2';
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`API ${res.status}: ${body}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', ...init?.headers },
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`API ${res.status}: ${body}`);
+    }
+    return res.json();
+  } catch (err: any) {
+    if (err.name === 'AbortError') throw new Error('API request timeout (15s)');
+    throw err;
+  } finally {
+    clearTimeout(timeout);
   }
-  return res.json();
 }
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -69,6 +80,12 @@ export interface OrderDto {
   createdAt: string;
   matchedAt: string | null;
   completedAt: string | null;
+  suiSameChainMeta: {
+    orderObjectId: string;
+    coinAType: string;
+    coinBType: string;
+    pairId: string;
+  } | null;
 }
 
 export interface HtlcInfoDto {

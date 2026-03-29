@@ -15,7 +15,7 @@ import { useFillSuiSameChainOrder } from '@/hooks/useSuiSameChainOrders';
 import { getKnownPairs } from '@/lib/sui/pairRegistry';
 import { useCreateHTLCSwap } from '@/hooks/useHTLC';
 import { useTokenApproval } from '@/hooks/useTokenApproval';
-import type { UnifiedOrder } from '@/hooks/useAllUnifiedOrdersFixed';
+import type { UnifiedOrder } from '@/types/order-unified';
 import { getContractAddress, getChainConfig, getExplorerTxUrl } from '@/lib/contracts/addresses';
 import { isNativeToken, getTokenByAddress, evmPlaceholderToSuiToken } from '@/lib/constants/tokens';
 import { saveSwap } from '@/lib/utils/swapStorage';
@@ -302,7 +302,7 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
         // Execute same-chain order
         await sameChainHook.executeOrder({
           orderId: order.id,
-          tokenToBuy: order.buyToken,
+          tokenToBuy: order.buyToken as `0x${string}`,
           buyAmount: order.buyAmount,
         });
       } else if (isSuiSwap) {
@@ -608,6 +608,13 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
           </div>
         )}
 
+        {/* Pre-flight expiration check */}
+        {order?.expiresAt && order.expiresAt < BigInt(Math.floor(Date.now() / 1000)) && (
+          <div className="mb-3 p-2 rounded bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+            This order has expired and cannot be matched.
+          </div>
+        )}
+
         <Button
           variant="primary"
           className="w-full"
@@ -617,7 +624,8 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
             (isSuiSameChain ? !suiAccount : needsBothWallets ? !bothWalletsConnected : isSuiTarget ? !suiAccount : !address) ||
             (!isSuiSameChain && !isSameChain && !needsBothWallets && !isTargetWalletValid) ||
             (isSuiSource && !isSameChain && !isValidEvmAddress(creatorEvmAddress)) ||
-            !!(sameChainHook.txHash || crossChainHook.hash)
+            !!(sameChainHook.txHash || crossChainHook.hash) ||
+            !!(order?.expiresAt && order.expiresAt < BigInt(Math.floor(Date.now() / 1000)))
           }
         >
           {needsChainSwitch

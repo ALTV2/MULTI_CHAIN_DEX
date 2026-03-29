@@ -6,16 +6,46 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { TokenIcon } from '@/components/common/TokenIcon';
 import { getChainConfig } from '@/lib/contracts/addresses';
-import { useLiveOrderFeed, type LiveOrder } from '@/hooks/useLiveOrderFeed';
+import { useOrderBook } from '@/hooks/useDexApi';
+import type { OrderDto } from '@/lib/api/dexApi';
 import { useTranslation } from '@/hooks/useTranslation';
+
+/** Adapt OrderDto to the shape LiveOrderCard expects. */
+type LiveOrder = {
+  id: string;
+  sourceChainId: number | string;
+  targetChainId: number | string;
+  type: 'same-chain' | 'cross-chain';
+  sellSymbol: string;
+  buySymbol: string;
+  formattedSellAmount: string;
+  formattedBuyAmount: string;
+  creator: string;
+  expiresAt: bigint;
+};
+
+function orderDtoToLiveOrder(o: OrderDto): LiveOrder {
+  return {
+    id: `${o.sourceChainId}-${o.onChainOrderId}`,
+    sourceChainId: o.sourceChainId.includes(':') ? o.sourceChainId : Number(o.sourceChainId),
+    targetChainId: o.targetChainId ? (o.targetChainId.includes(':') ? o.targetChainId : Number(o.targetChainId)) : (o.sourceChainId.includes(':') ? o.sourceChainId : Number(o.sourceChainId)),
+    type: o.orderType === 'CROSS_CHAIN' ? 'cross-chain' : 'same-chain',
+    sellSymbol: o.sellToken?.symbol || '???',
+    buySymbol: o.buyToken?.symbol || '???',
+    formattedSellAmount: o.formattedSellAmount,
+    formattedBuyAmount: o.formattedBuyAmount,
+    creator: o.creator,
+    expiresAt: o.expiresAt ? BigInt(o.expiresAt) : BigInt(0),
+  };
+}
 
 function truncateAddr(addr: string) {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
-function timeUntil(expiresAt: number): string {
+function timeUntil(expiresAt: bigint | number): string {
   const now = Math.floor(Date.now() / 1000);
-  const diff = expiresAt - now;
+  const diff = Number(expiresAt) - now;
   if (diff <= 0) return 'Expired';
   const hours = Math.floor(diff / 3600);
   const mins = Math.floor((diff % 3600) / 60);
@@ -67,7 +97,7 @@ function OrderRow({ order }: { order: LiveOrder }) {
         </div>
         <div className="flex flex-col min-w-0">
           <span className="text-sm font-semibold text-gray-900 dark:text-white truncate">
-            {parseFloat(order.sellAmount).toFixed(4)}
+            {parseFloat(order.formattedSellAmount).toFixed(4)}
           </span>
           <span className="text-xs text-gray-500 dark:text-gray-400">
             {order.sellSymbol}
@@ -89,7 +119,7 @@ function OrderRow({ order }: { order: LiveOrder }) {
         </div>
         <div className="flex flex-col min-w-0">
           <span className="text-sm font-semibold text-gray-900 dark:text-white truncate">
-            {parseFloat(order.buyAmount).toFixed(4)}
+            {parseFloat(order.formattedBuyAmount).toFixed(4)}
           </span>
           <span className="text-xs text-gray-500 dark:text-gray-400">
             {order.buySymbol}
@@ -120,7 +150,8 @@ function OrderRow({ order }: { order: LiveOrder }) {
 }
 
 export function LiveOrderFeed() {
-  const { data: orders, isLoading, refetch } = useLiveOrderFeed();
+  const { data: page, isLoading, refetch } = useOrderBook({ status: 'ACTIVE', size: 20 });
+  const orders = (page?.content || []).map(orderDtoToLiveOrder);
   const { t } = useTranslation();
   const [loaded, setLoaded] = useState(false);
 

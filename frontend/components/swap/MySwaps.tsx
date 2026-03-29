@@ -8,7 +8,8 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { SwapCard } from './SwapCard';
-import { useAllUserOrders } from '@/hooks/useAllUserOrders';
+import { useActiveSwaps, useSwapHistory, useRefreshDexData } from '@/hooks/useDexApi';
+import { swapDtoToActiveSwap } from '@/lib/api/dexApiMapper';
 import { useTranslation } from '@/hooks/useTranslation';
 
 type FilterView = 'inProgress' | 'open' | 'history';
@@ -18,45 +19,37 @@ interface MySwapsProps {
 }
 
 export function MySwaps({ initialFilter = 'inProgress' }: MySwapsProps = {}) {
-  const { isConnected, address } = useAccount(); // EVM wallet
-  const suiAccount = useCurrentAccount(); // SUI wallet
-  const { activeSwaps, historySwaps, isLoading, refetch } = useAllUserOrders();
+  const { isConnected } = useAccount();
+  const suiAccount = useCurrentAccount();
+  const { data: activeSwapDtos, isLoading: isActiveLoading } = useActiveSwaps();
+  const { data: historyPage, isLoading: isHistoryLoading } = useSwapHistory();
+  const refreshAll = useRefreshDexData();
   const { t } = useTranslation();
   const [filterView, setFilterView] = useState<FilterView>(initialFilter);
 
-  // Check if either EVM or SUI wallet is connected
   const hasWallet = isConnected || !!suiAccount;
+  const isLoading = isActiveLoading || isHistoryLoading;
 
-  // Check if a value matches any connected wallet address.
-  // Compares against BOTH EVM and SUI wallets — needed for cross-chain swaps where
-  // creator is SUI but matcher is EVM (or vice versa).
-  const evmAddr = address?.toLowerCase();
-  const suiAddr = suiAccount?.address?.toLowerCase();
-  const matchesUser = (val: string | undefined): boolean => {
-    if (!val) return false;
-    const lower = val.toLowerCase();
-    return (!!evmAddr && lower === evmAddr) || (!!suiAddr && lower === suiAddr);
-  };
+  // Convert API DTOs to ActiveSwap format for SwapCard compatibility
+  const activeSwaps = useMemo(
+    () => (activeSwapDtos || []).map(swapDtoToActiveSwap),
+    [activeSwapDtos]
+  );
 
-  // Split activeSwaps into "In Progress" (matched+) and "Open" (order_created)
+  const historySwaps = useMemo(
+    () => (historyPage?.content || []).map(swapDtoToActiveSwap),
+    [historyPage]
+  );
+
+  // Split active into "In Progress" (matched+) and "Open" (order_created)
   const inProgressOrders = useMemo(
-    () =>
-      activeSwaps.filter((s) => {
-        if (s.phase === 'order_created') return false;
-        if (!evmAddr && !suiAddr) return false;
-        return matchesUser(s.meta.creator) || matchesUser(s.meta.matcher);
-      }),
-    [activeSwaps, evmAddr, suiAddr] // eslint-disable-line react-hooks/exhaustive-deps
+    () => activeSwaps.filter((s) => s.phase !== 'order_created'),
+    [activeSwaps]
   );
 
   const openOrders = useMemo(
-    () =>
-      activeSwaps.filter((s) => {
-        if (s.phase !== 'order_created') return false;
-        if (!evmAddr && !suiAddr) return false;
-        return matchesUser(s.meta.creator);
-      }),
-    [activeSwaps, evmAddr, suiAddr] // eslint-disable-line react-hooks/exhaustive-deps
+    () => activeSwaps.filter((s) => s.phase === 'order_created'),
+    [activeSwaps]
   );
 
   if (!hasWallet) {
@@ -117,8 +110,8 @@ export function MySwaps({ initialFilter = 'inProgress' }: MySwapsProps = {}) {
             </button>
           </div>
         </div>
-        <Button size="sm" variant="secondary" onClick={refetch} loading={isLoading}>
-          {t('common.retry').replace('Try Again', 'Refresh')}
+        <Button size="sm" variant="secondary" onClick={refreshAll} loading={isLoading}>
+          Refresh
         </Button>
       </div>
 
@@ -147,7 +140,6 @@ export function MySwaps({ initialFilter = 'inProgress' }: MySwapsProps = {}) {
             exit={{ opacity: 0, x: -20 }}
             transition={{ duration: 0.2 }}
           >
-            {/* In Progress Orders */}
             {inProgressOrders.length === 0 ? (
               <Card className="p-8 text-center">
                 <p className="text-gray-400">No orders in progress</p>
@@ -158,7 +150,7 @@ export function MySwaps({ initialFilter = 'inProgress' }: MySwapsProps = {}) {
                   <SwapCard
                     key={`inProgress-${swap.meta.orderId}-${swap.meta.sourceChainId}-${swap.phase}`}
                     swap={swap}
-                    onUpdate={refetch}
+                    onUpdate={refreshAll}
                   />
                 ))}
               </div>
@@ -172,7 +164,6 @@ export function MySwaps({ initialFilter = 'inProgress' }: MySwapsProps = {}) {
             exit={{ opacity: 0, x: -20 }}
             transition={{ duration: 0.2 }}
           >
-            {/* Open Orders */}
             {openOrders.length === 0 ? (
               <Card className="p-8 text-center">
                 <p className="text-gray-400">No open orders</p>
@@ -183,7 +174,7 @@ export function MySwaps({ initialFilter = 'inProgress' }: MySwapsProps = {}) {
                   <SwapCard
                     key={`open-${swap.meta.orderId}-${swap.meta.sourceChainId}-${swap.phase}`}
                     swap={swap}
-                    onUpdate={refetch}
+                    onUpdate={refreshAll}
                   />
                 ))}
               </div>
@@ -197,7 +188,6 @@ export function MySwaps({ initialFilter = 'inProgress' }: MySwapsProps = {}) {
             exit={{ opacity: 0, x: -20 }}
             transition={{ duration: 0.2 }}
           >
-            {/* History */}
             {historySwaps.length === 0 ? (
               <Card className="p-8 text-center">
                 <p className="text-gray-400">{t('orders.noOrdersDesc')}</p>
@@ -208,7 +198,7 @@ export function MySwaps({ initialFilter = 'inProgress' }: MySwapsProps = {}) {
                   <SwapCard
                     key={`history-${swap.meta.orderId}-${swap.meta.sourceChainId}-${swap.phase}`}
                     swap={swap}
-                    onUpdate={refetch}
+                    onUpdate={refreshAll}
                   />
                 ))}
               </div>

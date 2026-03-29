@@ -1,123 +1,41 @@
 package com.multichain.dex.controller;
 
-import com.multichain.dex.domain.enums.SwapStatus;
-import com.multichain.dex.dto.StoreSecretRequest;
-import com.multichain.dex.dto.UpdateHtlcIdRequest;
-import com.multichain.dex.dto.UpdateSwapStatusRequest;
-import com.multichain.dex.dto.request.CreateSwapRequest;
-import com.multichain.dex.dto.response.SwapHistoryResponse;
-import com.multichain.dex.security.UserPrincipal;
-import com.multichain.dex.service.SwapService;
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.security.SecurityRequirement;
-import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.validation.Valid;
+import com.multichain.dex.dto.SwapResponse;
+import com.multichain.dex.service.SwapQueryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.web.PageableDefault;
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
-import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/swap")
+@RequestMapping("/api/v2/swaps")
 @RequiredArgsConstructor
-@Tag(name = "Swap", description = "Cross-chain swap management endpoints")
-@SecurityRequirement(name = "bearer-jwt")
 public class SwapController {
 
-    private final SwapService swapService;
+    private final SwapQueryService swapQueryService;
 
-    @PostMapping
-    @Operation(summary = "Create swap record", description = "Create a new swap record for tracking")
-    public ResponseEntity<SwapHistoryResponse> createSwap(
-            @AuthenticationPrincipal UserPrincipal principal,
-            @Valid @RequestBody CreateSwapRequest request) {
-        SwapHistoryResponse response = swapService.createSwapRecord(principal.getUserId(), request);
-        return ResponseEntity.ok(response);
-    }
-
-    @GetMapping("/history")
-    @Operation(summary = "Get swap history", description = "Get paginated swap history for the user")
-    public ResponseEntity<Page<SwapHistoryResponse>> getSwapHistory(
-            @AuthenticationPrincipal UserPrincipal principal,
-            @PageableDefault(size = 20) Pageable pageable) {
-        Page<SwapHistoryResponse> history = swapService.getUserSwapHistory(principal.getUserId(), pageable);
-        return ResponseEntity.ok(history);
-    }
-
+    /**
+     * Active swaps: non-terminal orders where any of the provided wallets is involved.
+     * Enriched with HTLC details and computed phase.
+     */
     @GetMapping("/active")
-    @Operation(summary = "Get active swaps", description = "Get all active swaps for the user")
-    public ResponseEntity<List<SwapHistoryResponse>> getActiveSwaps(
-            @AuthenticationPrincipal UserPrincipal principal) {
-        List<SwapHistoryResponse> swaps = swapService.getActiveSwaps(principal.getUserId());
-        return ResponseEntity.ok(swaps);
+    public List<SwapResponse> getActiveSwaps(@RequestParam List<String> wallet) {
+        return swapQueryService.findActiveSwaps(wallet);
     }
 
-    @GetMapping("/{swapId}")
-    @Operation(summary = "Get swap by ID", description = "Get swap details by ID")
-    public ResponseEntity<SwapHistoryResponse> getSwapById(
-            @AuthenticationPrincipal UserPrincipal principal,
-            @PathVariable UUID swapId) {
-        SwapHistoryResponse response = swapService.getSwapById(principal.getUserId(), swapId);
-        return ResponseEntity.ok(response);
-    }
-
-    @GetMapping("/htlc/{htlcSwapId}")
-    @Operation(summary = "Get swap by HTLC ID", description = "Get swap details by HTLC swap ID")
-    public ResponseEntity<SwapHistoryResponse> getSwapByHtlcId(@PathVariable String htlcSwapId) {
-        SwapHistoryResponse response = swapService.getSwapByHtlcId(htlcSwapId);
-        return ResponseEntity.ok(response);
-    }
-
-    @PatchMapping("/{swapId}/status")
-    @Operation(summary = "Update swap status", description = "Update the status of a swap")
-    public ResponseEntity<SwapHistoryResponse> updateStatus(
-            @AuthenticationPrincipal UserPrincipal principal,
-            @PathVariable UUID swapId,
-            @Valid @RequestBody UpdateSwapStatusRequest request) {
-        SwapStatus status = SwapStatus.valueOf(request.getStatus());
-        String txHash = request.getTxHash();
-        Boolean isSourceTx = request.getIsSourceTx() != null ? request.getIsSourceTx() : true;
-
-        SwapHistoryResponse response = swapService.updateSwapStatus(principal.getUserId(), swapId, status, txHash, isSourceTx);
-        return ResponseEntity.ok(response);
-    }
-
-    @PatchMapping("/{swapId}/htlc")
-    @Operation(summary = "Update HTLC swap ID", description = "Set the on-chain HTLC swap ID")
-    public ResponseEntity<SwapHistoryResponse> updateHtlcId(
-            @AuthenticationPrincipal UserPrincipal principal,
-            @PathVariable UUID swapId,
-            @Valid @RequestBody UpdateHtlcIdRequest request) {
-        SwapHistoryResponse response = swapService.updateHtlcSwapId(principal.getUserId(), swapId, request.getHtlcSwapId());
-        return ResponseEntity.ok(response);
-    }
-
-    @PostMapping("/{swapId}/secret")
-    @Operation(summary = "Store encrypted secret", description = "Store encrypted HTLC secret for safekeeping")
-    public ResponseEntity<Void> storeSecret(
-            @AuthenticationPrincipal UserPrincipal principal,
-            @PathVariable UUID swapId,
-            @Valid @RequestBody StoreSecretRequest request) {
-        swapService.storeEncryptedSecret(principal.getUserId(), swapId, request.getEncryptedSecret());
-        return ResponseEntity.ok().build();
-    }
-
-    @GetMapping("/{swapId}/secret")
-    @Operation(summary = "Get encrypted secret", description = "Retrieve encrypted HTLC secret")
-    public ResponseEntity<Map<String, String>> getSecret(
-            @AuthenticationPrincipal UserPrincipal principal,
-            @PathVariable UUID swapId) {
-        String secret = swapService.getEncryptedSecret(principal.getUserId(), swapId);
-        if (secret == null) {
-            return ResponseEntity.notFound().build();
-        }
-        return ResponseEntity.ok(Map.of("encryptedSecret", secret));
+    /**
+     * Swap history: completed/cancelled/expired orders for the provided wallets.
+     */
+    @GetMapping("/history")
+    public Page<SwapResponse> getHistory(
+            @RequestParam List<String> wallet,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        var pageable = PageRequest.of(page, Math.min(size, 100), Sort.by(Sort.Direction.DESC, "completedAt"));
+        return swapQueryService.findHistory(wallet, pageable);
     }
 }

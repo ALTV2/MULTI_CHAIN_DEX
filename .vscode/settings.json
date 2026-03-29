@@ -12,5 +12,6 @@
   },
   "files.associations": {
     "*.sol": "solidity"
-  }
+  },
+  "java.configuration.updateBuildConfiguration": "interactive"
 }

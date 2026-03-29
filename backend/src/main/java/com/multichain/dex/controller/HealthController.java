@@ -1,27 +1,37 @@
 package com.multichain.dex.controller;
 
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.http.ResponseEntity;
+import com.multichain.dex.repository.ChainRepository;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/api")
-@Tag(name = "Health", description = "Health check endpoints")
+@RequestMapping("/api/v2")
+@RequiredArgsConstructor
 public class HealthController {
 
+    private final ChainRepository chainRepo;
+
     @GetMapping("/health")
-    @Operation(summary = "Health check", description = "Check if the API is running")
-    public ResponseEntity<Map<String, Object>> health() {
-        return ResponseEntity.ok(Map.of(
-            "status", "UP",
-            "timestamp", Instant.now().toString(),
-            "service", "MultiChain DEX Backend"
-        ));
+    public Map<String, Object> health() {
+        var chains = chainRepo.findAll().stream()
+                .map(c -> Map.of(
+                        "id", c.getId(),
+                        "name", c.getShortName(),
+                        "lastPolledAt", c.getLastPolledAt() != null ? c.getLastPolledAt().toString() : "never",
+                        "lastIndexedBlock", c.getLastIndexedBlock()
+                ))
+                .toList();
+
+        return Map.of(
+                "status", "UP",
+                "timestamp", Instant.now().toString(),
+                "chains", chains
+        );
     }
 }

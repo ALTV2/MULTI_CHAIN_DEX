@@ -25,20 +25,23 @@ services:
     ports:
       - "8080:8080"
     environment:
-      SPRING_PROFILES_ACTIVE: docker
+      # Database
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: ${DB_NAME:-multichain_dex}
       DB_USER: ${DB_USER:-dex}
       DB_PASSWORD: ${DB_PASSWORD:-dex_password}
-      JWT_SECRET: ${JWT_SECRET:-multi-chain-dex-jwt-secret-key-for-development-2026}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-your-32-byte-encryption-key!!}
-      ETHEREUM_RPC_URL: ${ETHEREUM_RPC_URL:-https://rpc.sepolia.org}
-      POLYGON_RPC_URL: ${POLYGON_RPC_URL:-https://rpc-amoy.polygon.technology}
-      ETHEREUM_HTLC_ADDRESS: ${ETHEREUM_HTLC_ADDRESS:-0x9aB954f470cc7196C0803bE44b1d58e762a48964}
-      ETHEREUM_CCOB_ADDRESS: ${ETHEREUM_CCOB_ADDRESS:-0x6A78740f7D35818D30e23ebD5A5880A1836aa445}
-      POLYGON_HTLC_ADDRESS: ${POLYGON_HTLC_ADDRESS:-0x3d857Fc3510246A050817C29ea7C434ab7EbA81A}
-      POLYGON_CCOB_ADDRESS: ${POLYGON_CCOB_ADDRESS:-0x5F08Ec67A95C4394d577c90c65083AEb119BD922}
+
+      # RPC URLs (Alchemy — server-side only, never exposed to browser)
+      SEPOLIA_RPC_URL: ${SEPOLIA_RPC_URL:-https://eth-sepolia.g.alchemy.com/v2/VPxg_-3LrpC7xW0yO-AGi}
+      POLYGON_RPC_URL: ${POLYGON_RPC_URL:-https://polygon-amoy.g.alchemy.com/v2/VPxg_-3LrpC7xW0yO-AGi}
+      SUI_RPC_URL: ${SUI_RPC_URL:-https://sui-testnet.g.alchemy.com/v2/VPxg_-3LrpC7xW0yO-AGi}
+
+      # Indexer
+      INDEXER_ENABLED: ${INDEXER_ENABLED:-true}
+      INDEXER_INTERVAL: ${INDEXER_INTERVAL:-10000}
+
+      # CORS
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
     depends_on:
       db:
@@ -52,12 +55,13 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_SEPOLIA_RPC_URL: ${NEXT_PUBLIC_SEPOLIA_RPC_URL:-https://rpc.sepolia.org}
-        NEXT_PUBLIC_POLYGON_AMOY_RPC_URL: ${NEXT_PUBLIC_POLYGON_AMOY_RPC_URL:-https://rpc-amoy.polygon.technology}
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080/api}
+        # Frontend only needs backend API URL — no Alchemy keys
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080/api/v2}
         NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: ${NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID:-}
     ports:
       - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080/api/v2}
     depends_on:
       - backend
     restart: unless-stopped

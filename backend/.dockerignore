@@ -1,5 +1,6 @@
-target
-.mvn/repository
-*.log
-.env
+target/
+.idea/
+*.iml
 .git
+.env
+.env.*

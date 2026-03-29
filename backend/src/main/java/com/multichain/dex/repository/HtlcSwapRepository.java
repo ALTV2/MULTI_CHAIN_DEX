@@ -27,6 +27,7 @@ public interface HtlcSwapRepository extends JpaRepository<HtlcSwap, UUID> {
 
     Optional<HtlcSwap> findByHashlockAndChainIdAndRole(String hashlock, String chainId, HtlcRole role);
 
-    /** Find first HTLC with given hashlock across ALL chains (indexed lookup, no full scan). */
-    Optional<HtlcSwap> findFirstByHashlockIgnoreCase(String hashlock);
+    /** Find first HTLC with given hashlock across ALL chains, eagerly loading order. */
+    @Query("SELECT h FROM HtlcSwap h JOIN FETCH h.order WHERE LOWER(h.hashlock) = LOWER(:hashlock)")
+    Optional<HtlcSwap> findFirstByHashlockIgnoreCase(@Param("hashlock") String hashlock);
 }

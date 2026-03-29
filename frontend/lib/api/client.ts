@@ -1,6 +1,6 @@
 import { useAuthStore } from '@/stores/useAuthStore';
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api';
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api/v2';
 
 let isLoggingOut = false;
 

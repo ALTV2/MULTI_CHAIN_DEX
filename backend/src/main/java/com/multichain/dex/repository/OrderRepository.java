@@ -2,6 +2,7 @@ package com.multichain.dex.repository;
 
 import com.multichain.dex.domain.entity.Order;
 import com.multichain.dex.domain.enums.OrderStatus;
+import com.multichain.dex.domain.enums.OrderType;
 import com.multichain.dex.domain.enums.SwapPhase;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -18,6 +19,8 @@ import java.util.UUID;
 public interface OrderRepository extends JpaRepository<Order, UUID>, JpaSpecificationExecutor<Order> {
 
     Optional<Order> findBySourceChain_IdAndOnChainOrderId(String sourceChainId, String onChainOrderId);
+
+    Optional<Order> findBySourceChain_IdAndOnChainOrderIdAndOrderType(String sourceChainId, String onChainOrderId, OrderType orderType);
 
     /** Find a matched cross-chain order by creator+matcher addresses (case-insensitive). */
     @Query("""

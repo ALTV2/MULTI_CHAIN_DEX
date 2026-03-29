@@ -4,6 +4,11 @@ import { injected, coinbaseWallet, walletConnect } from 'wagmi/connectors';
 
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || '';
 
+// RPC for wagmi transport — used ONLY for balance checks, allowance reads, and tx signing.
+// All order/swap data reads go through the backend API.
+const sepoliaRpc = process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL || 'https://rpc.sepolia.org';
+const polygonRpc = process.env.NEXT_PUBLIC_POLYGON_AMOY_RPC_URL || 'https://rpc-amoy.polygon.technology';
+
 const connectors = [
   injected(),
   coinbaseWallet({ appName: 'Multi-Chain DEX' }),
@@ -14,10 +19,8 @@ export const config = createConfig({
   chains: [sepolia, polygonAmoy],
   connectors,
   transports: {
-    // Public RPCs — used only for balance checks and tx confirmation via wallet.
-    // All blockchain reads go through backend API, not these transports.
-    [sepolia.id]: http('https://rpc.sepolia.org', { batch: false }),
-    [polygonAmoy.id]: http('https://rpc-amoy.polygon.technology', { batch: false }),
+    [sepolia.id]: http(sepoliaRpc, { batch: false }),
+    [polygonAmoy.id]: http(polygonRpc, { batch: false }),
   },
   batch: { multicall: false },
   pollingInterval: 120_000,

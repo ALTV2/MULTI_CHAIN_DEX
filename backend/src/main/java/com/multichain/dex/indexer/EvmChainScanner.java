@@ -22,9 +22,12 @@ import org.web3j.protocol.core.methods.request.EthFilter;
 import org.web3j.protocol.core.methods.response.EthLog;
 import org.web3j.protocol.core.methods.response.Log;
 import org.web3j.protocol.core.methods.response.TransactionReceipt;
+import org.web3j.crypto.Hash;
+import org.web3j.utils.Numeric;
 import org.web3j.protocol.http.HttpService;
 
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -97,18 +100,25 @@ public class EvmChainScanner implements ChainScanner {
             if (htlcAddr == null) return;
 
             BigInteger latestBlock = retryRpc(() -> web3j.ethBlockNumber().send().getBlockNumber());
-            long fromBlock = Math.max(chain.getLastIndexedBlock() + 1, latestBlock.longValue() - 10000);
+            long latest = latestBlock.longValue();
 
-            // 1. Discover NEW HTLCs from SwapCreated events
-            scanSwapCreatedEvents(chain, web3j, htlcAddr, fromBlock, latestBlock.longValue());
+            // Alchemy Free tier limits eth_getLogs to 10-block range.
+            // Scan multiple 10-block chunks per cycle to catch up quickly (max 100 chunks = 1000 blocks).
+            long cursor = chain.getLastIndexedBlock() + 1;
+            int maxChunks = 100;
 
-            // 2. Extract secrets from SwapWithdrawn events
-            scanSwapWithdrawnEvents(chain, web3j, htlcAddr, fromBlock, latestBlock.longValue());
+            for (int chunk = 0; chunk < maxChunks && cursor <= latest; chunk++) {
+                long fromBlock = cursor;
+                long toBlock = Math.min(fromBlock + 9, latest);
 
-            // 3. Detect refunds from SwapRefunded events
-            scanSwapRefundedEvents(chain, web3j, htlcAddr, fromBlock, latestBlock.longValue());
+                scanSwapCreatedEvents(chain, web3j, htlcAddr, fromBlock, toBlock);
+                scanSwapWithdrawnEvents(chain, web3j, htlcAddr, fromBlock, toBlock);
+                scanSwapRefundedEvents(chain, web3j, htlcAddr, fromBlock, toBlock);
 
-            // 4. Poll existing ACTIVE HTLCs for status changes (fallback)
+                cursor = toBlock + 1;
+            }
+
+            // Poll existing ACTIVE HTLCs for status changes (fallback)
             List<HtlcSwap> activeHtlcs = htlcRepo.findByChainIdAndStatus(chain.getId(), HtlcStatus.ACTIVE);
             for (HtlcSwap htlc : activeHtlcs) {
                 if (htlc.getOnChainSwapId() == null) continue;
@@ -119,7 +129,7 @@ public class EvmChainScanner implements ChainScanner {
                 }
             }
 
-            chain.setLastIndexedBlock(latestBlock.longValue());
+            chain.setLastIndexedBlock(cursor - 1);
         } catch (Exception e) {
             log.error("[EVM:{}] Failed to scan HTLCs", chain.getId(), e);
         }
@@ -158,7 +168,8 @@ public class EvmChainScanner implements ChainScanner {
         if (totalOrders == null) return;
 
         long total = totalOrders.longValue();
-        long lastScanned = chain.getLastIndexedOrderId();
+        // Use separate counters for same-chain (OrderBook) vs cross-chain (CCOB)
+        long lastScanned = isSameChain ? chain.getLastIndexedScOrderId() : chain.getLastIndexedOrderId();
 
         // 1. Scan NEW orders only (from lastScanned+1 to total)
         int newOrders = 0;
@@ -177,7 +188,7 @@ public class EvmChainScanner implements ChainScanner {
                 }
                 newOrders++;
             } catch (Exception e) {
-                log.trace("[EVM:{}] Failed to read order {}", chain.getId(), i);
+                log.trace("[EVM:{}] Failed to read order {}", chain.getId(), i, e);
             }
         }
 
@@ -188,9 +199,13 @@ public class EvmChainScanner implements ChainScanner {
             log.info("[EVM:{}] Indexed {} new order(s) from {}", chain.getId(), newOrders, contractAddr);
         }
 
-        // Update high-water mark
+        // Update high-water mark (separate for same-chain vs cross-chain)
         if (total > lastScanned) {
-            chain.setLastIndexedOrderId(total);
+            if (isSameChain) {
+                chain.setLastIndexedScOrderId(total);
+            } else {
+                chain.setLastIndexedOrderId(total);
+            }
         }
     }
 
@@ -523,7 +538,7 @@ public class EvmChainScanner implements ChainScanner {
     // ── Upsert logic ──────────────────────────────────────────────────────
 
     private void upsertSameChainOrder(Chain chain, String orderId, Map<String, Object> data) {
-        var existing = orderRepo.findBySourceChain_IdAndOnChainOrderId(chain.getId(), orderId);
+        var existing = orderRepo.findBySourceChain_IdAndOnChainOrderIdAndOrderType(chain.getId(), orderId, OrderType.SAME_CHAIN);
         int statusInt = (int) data.get("status");
         OrderStatus status = ORDER_STATUS_MAP.getOrDefault(statusInt, OrderStatus.ACTIVE);
 
@@ -546,7 +561,7 @@ public class EvmChainScanner implements ChainScanner {
     }
 
     private void upsertCrossChainOrder(Chain chain, String orderId, Map<String, Object> data) {
-        var existing = orderRepo.findBySourceChain_IdAndOnChainOrderId(chain.getId(), orderId);
+        var existing = orderRepo.findBySourceChain_IdAndOnChainOrderIdAndOrderType(chain.getId(), orderId, OrderType.CROSS_CHAIN);
         int statusInt = (int) data.get("status");
         OrderStatus status = ORDER_STATUS_MAP.getOrDefault(statusInt, OrderStatus.ACTIVE);
 
@@ -566,6 +581,11 @@ public class EvmChainScanner implements ChainScanner {
                 .build());
 
         order.setStatus(status);
+
+        // Backfill buyToken if it was null (e.g. EVM placeholder not yet resolved)
+        if (order.getBuyToken() == null) {
+            order.setBuyToken(resolveTokenCrossChain(chain.getId(), targetChainId, (String) data.get("buyToken")));
+        }
 
         String matchedBy = (String) data.get("matchedBy");
         if (matchedBy != null && !matchedBy.equals("0x0000000000000000000000000000000000000000") && order.getMatcher() == null) {
@@ -612,27 +632,59 @@ public class EvmChainScanner implements ChainScanner {
                 "status", ((Uint8)d.get(6)).getValue().intValue());
     }
 
+    /**
+     * Decode CrossChainOrder struct (14 fields):
+     * id, creator, sellToken, sellAmount, sourceChainId, buyToken, buyAmount,
+     * targetChainId, targetAddress, minTimelock, expiresAt, status, matchedBy, htlcSwapId
+     */
     private Map<String, Object> callGetCcobOrder(Web3j web3j, String contract, BigInteger orderId) throws Exception {
         String data = FunctionEncoder.encode(new Function("getOrder", List.of(new Uint256(orderId)), List.of(
-                new TypeReference<Uint256>() {}, new TypeReference<Address>() {}, new TypeReference<Address>() {},
-                new TypeReference<Uint256>() {}, new TypeReference<Address>() {}, new TypeReference<Uint256>() {},
-                new TypeReference<Uint256>() {}, new TypeReference<Address>() {}, new TypeReference<Uint256>() {},
-                new TypeReference<Uint256>() {}, new TypeReference<Uint8>() {}, new TypeReference<Address>() {})));
+                new TypeReference<Uint256>() {},  // 0: id
+                new TypeReference<Address>() {},  // 1: creator
+                new TypeReference<Address>() {},  // 2: sellToken
+                new TypeReference<Uint256>() {},  // 3: sellAmount
+                new TypeReference<Uint256>() {},  // 4: sourceChainId
+                new TypeReference<Address>() {},  // 5: buyToken
+                new TypeReference<Uint256>() {},  // 6: buyAmount
+                new TypeReference<Uint256>() {},  // 7: targetChainId
+                new TypeReference<Address>() {},  // 8: targetAddress
+                new TypeReference<Uint256>() {},  // 9: minTimelock
+                new TypeReference<Uint256>() {},  // 10: expiresAt
+                new TypeReference<Uint8>() {},    // 11: status
+                new TypeReference<Address>() {},  // 12: matchedBy
+                new TypeReference<Bytes32>() {}   // 13: htlcSwapId
+        )));
         String result = ethCall(web3j, contract, data);
         if (result == null || result.length() < 10) return null;
         var d = FunctionReturnDecoder.decode(result, org.web3j.abi.Utils.convert(List.of(
-                new TypeReference<Uint256>() {}, new TypeReference<Address>() {}, new TypeReference<Address>() {},
-                new TypeReference<Uint256>() {}, new TypeReference<Address>() {}, new TypeReference<Uint256>() {},
-                new TypeReference<Uint256>() {}, new TypeReference<Address>() {}, new TypeReference<Uint256>() {},
-                new TypeReference<Uint256>() {}, new TypeReference<Uint8>() {}, new TypeReference<Address>() {})));
-        if (d.size() < 12) return null;
+                new TypeReference<Uint256>() {},  // 0: id
+                new TypeReference<Address>() {},  // 1: creator
+                new TypeReference<Address>() {},  // 2: sellToken
+                new TypeReference<Uint256>() {},  // 3: sellAmount
+                new TypeReference<Uint256>() {},  // 4: sourceChainId
+                new TypeReference<Address>() {},  // 5: buyToken
+                new TypeReference<Uint256>() {},  // 6: buyAmount
+                new TypeReference<Uint256>() {},  // 7: targetChainId
+                new TypeReference<Address>() {},  // 8: targetAddress
+                new TypeReference<Uint256>() {},  // 9: minTimelock
+                new TypeReference<Uint256>() {},  // 10: expiresAt
+                new TypeReference<Uint8>() {},    // 11: status
+                new TypeReference<Address>() {},  // 12: matchedBy
+                new TypeReference<Bytes32>() {}   // 13: htlcSwapId
+        )));
+        if (d.size() < 14) return null;
         return Map.ofEntries(
-                Map.entry("id", ((Uint256)d.get(0)).getValue()), Map.entry("creator", ((Address)d.get(1)).getValue()),
-                Map.entry("sellToken", ((Address)d.get(2)).getValue()), Map.entry("sellAmount", ((Uint256)d.get(3)).getValue()),
-                Map.entry("buyToken", ((Address)d.get(4)).getValue()), Map.entry("buyAmount", ((Uint256)d.get(5)).getValue()),
-                Map.entry("targetChainId", ((Uint256)d.get(6)).getValue()), Map.entry("targetAddress", ((Address)d.get(7)).getValue()),
-                Map.entry("expiresAt", ((Uint256)d.get(9)).getValue()), Map.entry("status", ((Uint8)d.get(10)).getValue().intValue()),
-                Map.entry("matchedBy", ((Address)d.get(11)).getValue()));
+                Map.entry("id", ((Uint256)d.get(0)).getValue()),
+                Map.entry("creator", ((Address)d.get(1)).getValue()),
+                Map.entry("sellToken", ((Address)d.get(2)).getValue()),
+                Map.entry("sellAmount", ((Uint256)d.get(3)).getValue()),
+                Map.entry("buyToken", ((Address)d.get(5)).getValue()),
+                Map.entry("buyAmount", ((Uint256)d.get(6)).getValue()),
+                Map.entry("targetChainId", ((Uint256)d.get(7)).getValue()),
+                Map.entry("targetAddress", ((Address)d.get(8)).getValue()),
+                Map.entry("expiresAt", ((Uint256)d.get(10)).getValue()),
+                Map.entry("status", ((Uint8)d.get(11)).getValue().intValue()),
+                Map.entry("matchedBy", ((Address)d.get(12)).getValue()));
     }
 
     private String ethCall(Web3j web3j, String to, String data) throws Exception {
@@ -680,7 +732,24 @@ public class EvmChainScanner implements ChainScanner {
 
     private Token resolveTokenCrossChain(String sourceChainId, String targetChainId, String address) {
         Token token = resolveToken(targetChainId, address);
-        return token != null ? token : resolveToken(sourceChainId, address);
+        if (token != null) return token;
+        // For EVM→SUI: buyToken on-chain is a keccak256-derived EVM placeholder.
+        // Reverse-lookup: find the SUI token whose type hashes to this placeholder.
+        if (targetChainId != null && targetChainId.startsWith("sui") && address != null) {
+            token = resolveTokenByEvmPlaceholder(targetChainId, address);
+            if (token != null) return token;
+        }
+        return resolveToken(sourceChainId, address);
+    }
+
+    private Token resolveTokenByEvmPlaceholder(String suiChainId, String evmAddress) {
+        String normalized = evmAddress.toLowerCase();
+        for (Token t : tokenRepo.findByChainId(suiChainId)) {
+            byte[] hash = Hash.sha3(t.getAddress().getBytes(StandardCharsets.UTF_8));
+            String placeholder = "0x" + Numeric.toHexStringNoPrefix(hash).substring(0, 40);
+            if (placeholder.equals(normalized)) return t;
+        }
+        return null;
     }
 
     private String resolveTargetChainId(BigInteger numericChainId) {

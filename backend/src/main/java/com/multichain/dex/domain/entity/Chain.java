@@ -63,10 +63,15 @@ public class Chain {
     @Builder.Default
     private long lastIndexedBlock = 0;
 
-    /** EVM/SUI: last scanned on-chain order ID (for incremental order scanning). */
+    /** EVM: last scanned cross-chain order ID (CCOB). */
     @Column(name = "last_indexed_order_id")
     @Builder.Default
     private long lastIndexedOrderId = 0;
+
+    /** EVM: last scanned same-chain order ID (OrderBook). */
+    @Column(name = "last_indexed_sc_order_id")
+    @Builder.Default
+    private long lastIndexedScOrderId = 0;
 
     /** SUI: cursor for SwapCreated event queries. */
     @Column(name = "last_event_cursor", length = 500)

@@ -35,16 +35,19 @@ export function UnifiedOrderTable({
   const { address } = useAccount();
   const suiAccount = useCurrentAccount();
   const chainId = useChainId();
-  const { switchChain } = useSwitchChain();
+  const { switchChainAsync } = useSwitchChain();
   const queryClient = useQueryClient();
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [cancelTxHash, setCancelTxHash] = useState<`0x${string}` | undefined>();
 
   const refreshAll = useRefreshDexData();
+  const isSameChain = sourceChainId != null && targetChainId != null && String(sourceChainId) === String(targetChainId);
   const { data: page, isLoading: isPageLoading } = useOrderBook({
     status: 'ACTIVE',
     sourceChain: sourceChainId != null ? String(sourceChainId) : undefined,
-    targetChain: targetChainId != null ? String(targetChainId) : undefined,
+    // Same-chain orders have no targetChain in DB — don't filter by it
+    targetChain: !isSameChain && targetChainId != null ? String(targetChainId) : undefined,
+    orderType: isSameChain ? 'SAME_CHAIN' : undefined,
     sellToken: sourceToken,
     buyToken: targetToken,
     size: 100,
@@ -118,9 +121,16 @@ export function UnifiedOrderTable({
 
     // Check if need to switch chain (EVM only — SUI chain switching handled by SUI wallet)
     if (chainId !== orderSourceChainId) {
-      toast.error(`Please switch to ${getChainConfig(orderSourceChainId)?.shortName} network first`);
       if (typeof orderSourceChainId === 'number') {
-        switchChain?.({ chainId: orderSourceChainId });
+        try {
+          toast.info(`Switching to ${getChainConfig(orderSourceChainId)?.shortName}...`);
+          await switchChainAsync({ chainId: orderSourceChainId });
+        } catch (err: any) {
+          console.error('Switch chain failed:', err);
+          toast.error(`Failed to switch network: ${err?.shortMessage || err?.message || 'unknown error'}`);
+        }
+      } else {
+        toast.error(`Please switch to ${getChainConfig(orderSourceChainId)?.shortName} network first`);
       }
       return;
     }

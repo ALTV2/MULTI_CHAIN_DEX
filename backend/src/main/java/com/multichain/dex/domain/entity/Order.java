@@ -22,7 +22,7 @@ import java.util.UUID;
  * on every indexer cycle for non-terminal orders.</p>
  */
 @Entity
-@Table(name = "orders", uniqueConstraints = @UniqueConstraint(columnNames = {"source_chain_id", "on_chain_order_id"}))
+@Table(name = "orders", uniqueConstraints = @UniqueConstraint(columnNames = {"source_chain_id", "on_chain_order_id", "order_type"}))
 @Getter
 @Setter
 @NoArgsConstructor

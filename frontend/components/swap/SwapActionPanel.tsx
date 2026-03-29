@@ -18,6 +18,7 @@ import { updateSwap, saveSwap } from '@/lib/utils/swapStorage';
 import { getRequiredChain } from '@/lib/utils/swapPhase';
 import { getContractAddress, chainConfig, SupportedChainId, getExplorerTxUrl } from '@/lib/contracts/addresses';
 import { isNativeToken, evmPlaceholderToSuiToken } from '@/lib/constants/tokens';
+import { getCreatorSuiAddress } from '@/lib/api/dexApi';
 import { useMemo } from 'react';
 import { orderBookABI } from '@/lib/contracts/abis/OrderBook';
 import { CROSS_CHAIN_ORDER_BOOK_ABI } from '@/lib/contracts/abis/CrossChainOrderBook';
@@ -879,14 +880,20 @@ function MatcherLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () 
           setError('Connect Slush (SUI) wallet to lock tokens on SUI');
           return;
         }
-        // For EVM→SUI: targetAddress/creatorSuiAddress may be truncated 20-byte EVM format.
-        // SUI expects 32-byte (64 hex chars). Zero-pad on the left if needed.
-        let creatorSuiAddress = meta.creatorSuiAddress || meta.targetAddress || '';
+        // For EVM→SUI: try to get the full 32-byte SUI address from backend registry.
+        // Falls back to zero-padded targetAddress if not registered (broken for non-zero-prefixed SUI addresses).
+        let creatorSuiAddress = meta.creatorSuiAddress || '';
+        if (!creatorSuiAddress && meta.creator) {
+          creatorSuiAddress = (await getCreatorSuiAddress(meta.creator)) || '';
+        }
         if (!creatorSuiAddress) {
-          setError('Creator SUI address not found in swap metadata');
+          creatorSuiAddress = meta.targetAddress || '';
+        }
+        if (!creatorSuiAddress) {
+          setError('Creator SUI address not found. The order creator must connect their SUI wallet before matching.');
           return;
         }
-        // Ensure SUI address is 32 bytes (0x + 64 hex)
+        // Ensure SUI address is 32 bytes (0x + 64 hex) — only pad if it's a short address
         const rawHex = creatorSuiAddress.replace('0x', '');
         if (rawHex.length < 64) {
           creatorSuiAddress = `0x${rawHex.padStart(64, '0')}`;
@@ -1116,14 +1123,13 @@ function MatcherWithdrawAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate:
   const sourceChainId = meta.sourceChainId;
   const targetChainId = meta.targetChainId;
 
-  // Read secret from SwapWithdrawn event on the target chain
-  // (creator withdrew from matcher's HTLC on target chain, that's where the secret is revealed)
-  // Works with both EVM and SUI chains
-  const { secret: revealedSecret, isLoading: isSearching } = useUnifiedSecretWatcher(
+  // Read secret: prefer backend API (works for all chains), fallback to on-chain watcher (SUI)
+  const { secret: watcherSecret, isLoading: isSearching } = useUnifiedSecretWatcher(
     targetChainId,
     meta.matcherHtlcSwapId as `0x${string}` | undefined,
     true
   );
+  const revealedSecret = swap.revealedSecret || watcherSecret;
 
   // Use appropriate withdraw hook based on source chain type
   const isEvmSource = typeof sourceChainId === 'number';
@@ -1648,45 +1654,5 @@ function CompleteAction({ swap, onUpdate }: { swap: ActiveSwap; onUpdate: () => 
     }
   }, [isSuccess, onUpdate]);
 
-  // SUI source chains don't have an EVM CCOB to complete — swap is already done
-  if (isSuiSource) {
-    return <Badge variant="success">Swap Completed</Badge>;
-  }
-
-  // If CCOB order is already completed, just show success
-  if (swap.orderStatus === 'Completed') {
-    return (
-      <Badge variant="success">Swap Completed</Badge>
-    );
-  }
-
-  const handleComplete = async () => {
-    setError(null);
-    try {
-      await completeOrder(BigInt(meta.orderId));
-    } catch (err: any) {
-      console.error('Complete order failed:', err);
-      setError(err?.shortMessage || err?.message || 'Failed to complete order');
-    }
-  };
-
-  return (
-    <div className="space-y-3">
-      <div className="p-2 rounded bg-green-500/10 text-green-400 text-xs">
-        Both sides have withdrawn. You can finalize the order on-chain.
-      </div>
-      {error && (
-        <div className="p-2 rounded bg-red-500/10 text-red-400 text-xs">{error}</div>
-      )}
-      <Button
-        size="sm"
-        variant="primary"
-        loading={isPending || isConfirming}
-        onClick={handleComplete}
-        disabled={isPending || isConfirming}
-      >
-        {isPending || isConfirming ? 'Completing...' : 'Complete Order'}
-      </Button>
-    </div>
-  );
+  return <Badge variant="success">Swap Completed</Badge>;
 }

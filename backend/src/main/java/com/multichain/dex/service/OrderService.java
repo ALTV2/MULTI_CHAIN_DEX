@@ -117,10 +117,12 @@ public class OrderService {
                 predicates.add(cb.equal(root.get("orderType"), orderType));
             }
             if (sellSymbol != null) {
-                predicates.add(cb.equal(cb.lower(root.get("sellToken").get("symbol")), sellSymbol.toLowerCase()));
+                String field = sellSymbol.startsWith("0x") ? "address" : "symbol";
+                predicates.add(cb.equal(cb.lower(root.get("sellToken").get(field)), sellSymbol.toLowerCase()));
             }
             if (buySymbol != null) {
-                predicates.add(cb.equal(cb.lower(root.get("buyToken").get("symbol")), buySymbol.toLowerCase()));
+                String field = buySymbol.startsWith("0x") ? "address" : "symbol";
+                predicates.add(cb.equal(cb.lower(root.get("buyToken").get(field)), buySymbol.toLowerCase()));
             }
 
             return predicates.isEmpty() ? cb.conjunction() : cb.and(predicates.toArray(new Predicate[0]));

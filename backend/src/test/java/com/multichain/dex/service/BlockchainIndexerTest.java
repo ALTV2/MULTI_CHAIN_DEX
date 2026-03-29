@@ -4,7 +4,6 @@ import com.multichain.dex.TestDataBuilder;
 import com.multichain.dex.domain.entity.Chain;
 import com.multichain.dex.domain.entity.Order;
 import com.multichain.dex.domain.entity.Token;
-import com.multichain.dex.domain.enums.OrderStatus;
 import com.multichain.dex.domain.enums.SwapPhase;
 import com.multichain.dex.repository.ChainRepository;
 import com.multichain.dex.repository.OrderRepository;
@@ -42,52 +41,41 @@ class BlockchainIndexerTest {
     }
 
     @Test
-    void poll_noEnabledChains_doesNothing() {
-        when(chainRepo.findByPollingEnabledTrue()).thenReturn(List.of());
-        indexer.poll();
-        verifyNoInteractions(scannerFactory);
-    }
-
-    @Test
-    void poll_scansEachEnabledChain() {
-        Chain polygon = TestDataBuilder.polygon();
-        when(chainRepo.findByPollingEnabledTrue()).thenReturn(List.of(sepolia, polygon));
+    void processChain_scansOrdersAndHtlcs() {
         when(scannerFactory.getScanner(any())).thenReturn(chainScanner);
         when(orderRepo.findByPhaseNotIn(any())).thenReturn(List.of());
 
-        indexer.poll();
+        indexer.processChain(sepolia);
 
-        verify(chainScanner, times(2)).scanOrders(any());
-        verify(chainScanner, times(2)).scanHtlcs(any());
-        verify(chainRepo, times(2)).save(any(Chain.class));
+        verify(chainScanner).scanOrders(sepolia);
+        verify(chainScanner).scanHtlcs(sepolia);
+        verify(chainRepo).save(any(Chain.class));
     }
 
     @Test
-    void poll_setsLastPolledAt() {
-        when(chainRepo.findByPollingEnabledTrue()).thenReturn(List.of(sepolia));
+    void processChain_setsLastPolledAt() {
         when(scannerFactory.getScanner(any())).thenReturn(chainScanner);
         when(orderRepo.findByPhaseNotIn(any())).thenReturn(List.of());
 
-        indexer.poll();
+        indexer.processChain(sepolia);
 
         verify(chainRepo).save(argThat(chain -> chain.getLastPolledAt() != null));
     }
 
     @Test
-    void poll_scannerException_doesNotStopOtherChains() {
-        Chain polygon = TestDataBuilder.polygon();
-        ChainScanner failScanner = mock(ChainScanner.class);
-        doThrow(new RuntimeException("RPC down")).when(failScanner).scanOrders(any());
+    void processChain_scannerException_doesNotPropagate() {
+        when(scannerFactory.getScanner(any())).thenReturn(chainScanner);
+        doThrow(new RuntimeException("RPC down")).when(chainScanner).scanOrders(any());
 
-        when(chainRepo.findByPollingEnabledTrue()).thenReturn(List.of(sepolia, polygon));
-        when(scannerFactory.getScanner(sepolia)).thenReturn(failScanner);
-        when(scannerFactory.getScanner(polygon)).thenReturn(chainScanner);
-        when(orderRepo.findByPhaseNotIn(any())).thenReturn(List.of());
+        // Should not throw
+        indexer.processChain(sepolia);
+    }
 
-        indexer.poll();
-
-        // Polygon should still be scanned despite Sepolia failure
-        verify(chainScanner).scanOrders(polygon);
+    @Test
+    void init_noEnabledChains_doesNothing() {
+        when(chainRepo.findByPollingEnabledTrue()).thenReturn(List.of());
+        indexer.init();
+        verifyNoInteractions(scannerFactory);
     }
 
     @Test

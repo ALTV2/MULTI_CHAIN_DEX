@@ -188,6 +188,24 @@ export function fetchSwapHistory(params: {
   return fetchJson(`/swaps/history?${q}`);
 }
 
+/** Register or update the EVM→SUI address mapping for the caller. */
+export function registerCrossChainAddress(evmAddress: string, suiAddress: string): Promise<void> {
+  return fetchJson('/addresses/cross-chain', {
+    method: 'POST',
+    body: JSON.stringify({ evmAddress, suiAddress }),
+  }).then(() => {});
+}
+
+/** Look up the full 32-byte SUI address for a given EVM address. Returns null if not found. */
+export async function getCreatorSuiAddress(evmAddress: string): Promise<string | null> {
+  try {
+    const data = await fetchJson<{ suiAddress: string }>(`/addresses/cross-chain?evmAddress=${evmAddress}`);
+    return data.suiAddress;
+  } catch {
+    return null;
+  }
+}
+
 export function notifyTransaction(data: {
   chainId: string;
   txHash: string;

@@ -35,7 +35,7 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
   const { address } = useAccount();
   const suiAccount = useCurrentAccount();
   const currentChainId = useChainId();
-  const { switchChain } = useSwitchChain();
+  const { switchChainAsync } = useSwitchChain();
   const [targetWallet, setTargetWallet] = useState('');
   const [swapSecret, setSwapSecret] = useState<`0x${string}` | null>(null);
   const [pendingSwapData, setPendingSwapData] = useState<any>(null);
@@ -269,7 +269,13 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
     }
 
     if (needsChainSwitch && requiredChainForMatch !== null) {
-      switchChain({ chainId: requiredChainForMatch });
+      try {
+        toast.info(`Switching to ${getChainConfig(requiredChainForMatch)?.shortName}...`);
+        await switchChainAsync({ chainId: requiredChainForMatch });
+      } catch (err: any) {
+        console.error('Switch chain failed:', err);
+        toast.error(`Failed to switch network: ${err?.shortMessage || err?.message || 'unknown error'}`);
+      }
       return;
     }
 

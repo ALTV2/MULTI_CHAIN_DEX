@@ -247,7 +247,7 @@ public class SuiChainScanner implements ChainScanner {
         // Use "sc-{pairId short}-{orderId}" as unique identifier to avoid collisions with CCOB orders
         String uniqueOrderId = "sc-" + pairId.substring(2, 8) + "-" + orderId;
 
-        var existing = orderRepo.findBySourceChain_IdAndOnChainOrderId(chain.getId(), uniqueOrderId);
+        var existing = orderRepo.findBySourceChain_IdAndOnChainOrderIdAndOrderType(chain.getId(), uniqueOrderId, OrderType.SAME_CHAIN);
 
         int statusNum = fields.path("status").asInt(0);
         // SUI same-chain: 0=Active, 1=Filled, 2=Cancelled
@@ -295,15 +295,16 @@ public class SuiChainScanner implements ChainScanner {
     // ── SUI CCOB order upsert ─────────────────────────────────────────────
 
     private void upsertSuiOrder(Chain chain, String orderId, JsonNode fields) {
-        var existing = orderRepo.findBySourceChain_IdAndOnChainOrderId(chain.getId(), orderId);
+        int targetChainId = fields.path("target_chain_id").asInt(0);
+        boolean isCrossChain = targetChainId != 0;
+        OrderType orderType = isCrossChain ? OrderType.CROSS_CHAIN : OrderType.SAME_CHAIN;
+
+        var existing = orderRepo.findBySourceChain_IdAndOnChainOrderIdAndOrderType(chain.getId(), orderId, orderType);
 
         int statusNum = fields.path("status").asInt(0);
         OrderStatus status = ORDER_STATUS_MAP.getOrDefault(statusNum, OrderStatus.ACTIVE);
 
         if (existing.isPresent() && existing.get().getStatus().isTerminal()) return;
-
-        int targetChainId = fields.path("target_chain_id").asInt(0);
-        boolean isCrossChain = targetChainId != 0;
 
         String sellTokenType = decodeByteArray(fields.path("sell_token"));
         String buyTokenType = decodeByteArray(fields.path("buy_token"));
@@ -313,7 +314,7 @@ public class SuiChainScanner implements ChainScanner {
         Order order = existing.orElseGet(() -> Order.builder()
                 .sourceChain(chain)
                 .onChainOrderId(orderId)
-                .orderType(isCrossChain ? OrderType.CROSS_CHAIN : OrderType.SAME_CHAIN)
+                .orderType(orderType)
                 .creator(fields.path("creator").asText(""))
                 .sellToken(resolveToken(chain.getId(), sellTokenType))
                 .sellAmount(new BigInteger(fields.path("sell_amount").asText("0")))
@@ -361,9 +362,10 @@ public class SuiChainScanner implements ChainScanner {
         if (result == null || !result.has("data")) return;
 
         // Update cursor FIRST (even if processing fails) to prevent infinite replay
+        // nextCursor is a JSON object (EventID), store as serialized JSON string
         try {
             if (result.has("nextCursor") && !result.get("nextCursor").isNull()) {
-                chain.setLastEventCursor(result.get("nextCursor").asText());
+                chain.setLastEventCursor(result.get("nextCursor").toString());
             }
         } catch (Exception e) {
             log.warn("[SUI] Failed to update created event cursor", e);
@@ -430,9 +432,10 @@ public class SuiChainScanner implements ChainScanner {
         if (result == null || !result.has("data")) return;
 
         // Update cursor FIRST to prevent infinite replay
+        // nextCursor is a JSON object (EventID), store as serialized JSON string
         try {
             if (result.has("nextCursor") && !result.get("nextCursor").isNull()) {
-                chain.setLastWithdrawnCursor(result.get("nextCursor").asText());
+                chain.setLastWithdrawnCursor(result.get("nextCursor").toString());
             }
         } catch (Exception e) {
             log.warn("[SUI] Failed to update withdrawn event cursor", e);
@@ -537,7 +540,10 @@ public class SuiChainScanner implements ChainScanner {
         var query = objectMapper.createObjectNode();
         query.put("MoveEventType", eventType);
         params.add(query);
-        params.add(cursor != null ? objectMapper.readTree("\"" + cursor + "\"") : objectMapper.nullNode());
+        // cursor is a JSON-serialized EventID object (e.g. {"txDigest":"...","eventSeq":"..."})
+        params.add(cursor != null && !cursor.isEmpty()
+                ? objectMapper.readTree(cursor)
+                : objectMapper.nullNode());
         params.add(50); // limit
         params.add(false); // descending = false (ascending to not miss events)
         return suiRpc(chain, "suix_queryEvents", params);

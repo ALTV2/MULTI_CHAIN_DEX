@@ -10,7 +10,7 @@ import { CrossChainStepper } from './CrossChainStepper';
 import { SwapActionPanel } from './SwapActionPanel';
 import { getPhaseDescription } from '@/lib/utils/swapPhase';
 import { chainConfig, SupportedChainId } from '@/lib/contracts/addresses';
-import { getTokenByAddress } from '@/lib/constants/tokens';
+import { getTokenByAddress, evmPlaceholderToSuiToken } from '@/lib/constants/tokens';
 import { formatAmount } from '@/lib/utils/formatAmount';
 import type { ActiveSwap } from '@/types/swap';
 
@@ -63,7 +63,13 @@ export function SwapCard({ swap, onUpdate }: SwapCardProps) {
   const sourceConfig = chainConfig[meta.sourceChainId as SupportedChainId] || { shortName: String(meta.sourceChainId), color: '#888' };
   const targetConfig = chainConfig[meta.targetChainId as SupportedChainId] || { shortName: String(meta.targetChainId), color: '#888' };
   const sellSymbol = getTokenByAddress(meta.sourceChainId, meta.sellToken as `0x${string}`)?.symbol || 'Token';
-  const buySymbol = getTokenByAddress(meta.targetChainId, meta.buyToken as `0x${string}`)?.symbol || 'Token';
+  const buySymbol = (() => {
+    const targetIsSui = typeof meta.targetChainId === 'string' && (meta.targetChainId as string).includes('sui');
+    const resolved = targetIsSui
+      ? (evmPlaceholderToSuiToken(meta.buyToken as string) ?? meta.buyToken as string)
+      : meta.buyToken as string;
+    return getTokenByAddress(meta.targetChainId, resolved)?.symbol || 'Token';
+  })();
   const description = getPhaseDescription(phase, meta.role, meta.sourceChainId);
 
   const isSuiSource = typeof meta.sourceChainId === 'string' && meta.sourceChainId.includes('sui');

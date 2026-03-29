@@ -22,6 +22,7 @@ import { useCreateSuiSameChainOrder } from '@/hooks/useSuiSameChainOrders';
 import { TargetWalletSelector } from '@/components/swap/TargetWalletSelector';
 import { useTranslation } from '@/hooks/useTranslation';
 import { toast } from 'sonner';
+import { registerCrossChainAddress } from '@/lib/api/dexApi';
 
 const ERC20_BALANCE_ABI = [
   {
@@ -40,7 +41,7 @@ interface UnifiedCreateOrderFormProps {
 export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFormProps = {}) {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
-  const { switchChain } = useSwitchChain();
+  const { switchChainAsync } = useSwitchChain();
   const suiAccount = useCurrentAccount();
   const { t } = useTranslation();
 
@@ -215,6 +216,10 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
       toast.success('Cross-chain order created successfully!');
       setSellAmount('');
       setBuyAmount('');
+      // For EVM→SUI: register the full SUI address so matchers can use it
+      if (isEvmToSui && address && suiAccount?.address) {
+        registerCrossChainAddress(address, suiAccount.address).catch(() => {});
+      }
       if (onOrderCreated) {
         setTimeout(onOrderCreated, 100);
       }
@@ -223,7 +228,7 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
     return () => {
       if (toastId) toast.dismiss(toastId);
     };
-  }, [isCrossChainPending, isCrossChainConfirming, isCrossChainSuccess, onOrderCreated]);
+  }, [isCrossChainPending, isCrossChainConfirming, isCrossChainSuccess, onOrderCreated, isEvmToSui, address, suiAccount?.address]);
 
   // Handle same-chain order success
   useEffect(() => {
@@ -364,8 +369,16 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
       }
 
       if (sourceChainId !== chainId) {
-        toast.error(`Please switch to ${sourceChainConfig?.name} network first`);
-        switchChain?.({ chainId: sourceChainId });
+        console.log('🔄 switchChainAsync called with:', { sourceChainId, currentChainId: chainId, type: typeof sourceChainId });
+        try {
+          toast.info(`Switching to ${sourceChainConfig?.name}...`);
+          const result = await switchChainAsync({ chainId: sourceChainId });
+          console.log('✅ switchChainAsync resolved:', result);
+          toast.success('Network switched!');
+        } catch (err: any) {
+          console.error('❌ switchChainAsync rejected:', err);
+          toast.error(`Failed to switch: ${err?.shortMessage || err?.message || 'unknown error'}`);
+        }
         return;
       }
 

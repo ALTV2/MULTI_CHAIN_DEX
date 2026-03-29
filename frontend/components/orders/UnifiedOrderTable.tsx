@@ -8,9 +8,10 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { useAllOrders } from '@/hooks/useAllOrders';
 import { useCancelSuiOrder } from '@/hooks/useSuiOrders';
 import type { UnifiedOrder } from '@/hooks/useAllUnifiedOrdersFixed';
+import { useOrderBook, useRefreshDexData } from '@/hooks/useDexApi';
+import { orderDtoToUnifiedOrder } from '@/lib/api/dexApiMapper';
 import { getChainConfig, getContractAddress, getExplorerTxUrl } from '@/lib/contracts/addresses';
 import { orderBookABI } from '@/lib/contracts/abis/OrderBook';
 import { CROSS_CHAIN_ORDER_BOOK_ABI } from '@/lib/contracts/abis/CrossChainOrderBook';
@@ -39,12 +40,17 @@ export function UnifiedOrderTable({
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [cancelTxHash, setCancelTxHash] = useState<`0x${string}` | undefined>();
 
-  const { orders, isLoading, refetchSuiOrders } = useAllOrders({
-    sourceChainId,
-    targetChainId,
-    sourceToken,
-    targetToken,
+  const refreshAll = useRefreshDexData();
+  const { data: page, isLoading: isPageLoading } = useOrderBook({
+    status: 'ACTIVE',
+    sourceChain: sourceChainId != null ? String(sourceChainId) : undefined,
+    targetChain: targetChainId != null ? String(targetChainId) : undefined,
+    sellToken: sourceToken,
+    buyToken: targetToken,
+    size: 100,
   });
+  const orders: UnifiedOrder[] = (page?.content || []).map(orderDtoToUnifiedOrder);
+  const isLoading = isPageLoading;
 
   // Use writeContract directly to handle cancellation for any chain dynamically
   const { writeContractAsync } = useWriteContract();
@@ -59,10 +65,7 @@ export function UnifiedOrderTable({
   useEffect(() => {
     if (isCancelSuccess && cancelTxHash) {
       console.log('✅ Order cancelled successfully, invalidating caches');
-      queryClient.invalidateQueries({ queryKey: ['crossChainOrders'] });
-      queryClient.invalidateQueries({ queryKey: ['orderBook'] });
-      queryClient.invalidateQueries({ queryKey: ['userOrders'] });
-      queryClient.invalidateQueries({ queryKey: ['tokenBalance'] });
+      queryClient.invalidateQueries({ queryKey: ['dex'] });
 
       toast.success('Order cancelled successfully!');
       setCancellingOrderId(null);
@@ -96,8 +99,7 @@ export function UnifiedOrderTable({
 
       try {
         await cancelSuiOrder(order.id.toString());
-        // Manually refetch SUI orders (useSuiOrders uses polling, not React Query)
-        refetchSuiOrders();
+        refreshAll();
         toast.success('SUI order cancelled successfully!');
         setCancellingOrderId(null);
       } catch (err: any) {

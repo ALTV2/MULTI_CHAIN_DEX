@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { TokenIcon } from '@/components/common/TokenIcon';
-import { useOrderBook } from '@/hooks/useOrderBook';
+import { useOrderBook as useDexOrderBook } from '@/hooks/useDexApi';
 import { useExecuteOrder } from '@/hooks/useExecuteOrder';
 import { useTranslation } from '@/hooks/useTranslation';
 import { toast } from 'sonner';
@@ -24,7 +24,28 @@ export function SameChainOrderTable({
   targetToken,
 }: SameChainOrderTableProps) {
   const { address } = useAccount();
-  const { orders, isLoading } = useOrderBook();
+  const { data: page, isLoading: isPageLoading } = useDexOrderBook({
+    status: 'ACTIVE',
+    sourceChain: String(chainId),
+    orderType: 'SAME_CHAIN',
+    sellToken: sourceToken,
+    buyToken: targetToken,
+  });
+  const isLoading = isPageLoading;
+  // Map OrderDto to minimal Order-compatible shape for rendering
+  const orders = (page?.content || []).map((o) => ({
+    id: BigInt(o.onChainOrderId),
+    creator: o.creator as `0x${string}`,
+    tokenToSell: (o.sellToken?.address || '') as `0x${string}`,
+    tokenToBuy: (o.buyToken?.address || '') as `0x${string}`,
+    sellAmount: BigInt(o.sellAmount),
+    buyAmount: BigInt(o.buyAmount),
+    status: 0, // Active
+    sellToken: { address: (o.sellToken?.address || '') as `0x${string}`, symbol: o.sellToken?.symbol || '???', name: o.sellToken?.name || '', decimals: o.sellToken?.decimals ?? 18, icon: '', logoURI: '' },
+    buyToken: { address: (o.buyToken?.address || '') as `0x${string}`, symbol: o.buyToken?.symbol || '???', name: o.buyToken?.name || '', decimals: o.buyToken?.decimals ?? 18, icon: '', logoURI: '' },
+    rate: parseFloat(o.formattedBuyAmount || '0') / (parseFloat(o.formattedSellAmount || '1') || 1),
+    inverseRate: parseFloat(o.formattedSellAmount || '0') / (parseFloat(o.formattedBuyAmount || '1') || 1),
+  }));
   const { t } = useTranslation();
   const { executeOrder, isExecuting } = useExecuteOrder();
 

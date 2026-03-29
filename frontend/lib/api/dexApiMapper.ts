@@ -87,6 +87,44 @@ export function orderDtoToActiveSwap(dto: OrderDto, role: 'creator' | 'matcher' 
   };
 }
 
+/** Convert OrderDto to UnifiedOrder for UnifiedOrderTable compatibility. */
+export function orderDtoToUnifiedOrder(dto: OrderDto): any {
+  const sourceChainId = parseChainId(dto.sourceChainId);
+  const targetChainId = dto.targetChainId ? parseChainId(dto.targetChainId) : sourceChainId;
+
+  const sellAmount = BigInt(dto.sellAmount || '0');
+  const buyAmount = BigInt(dto.buyAmount || '0');
+  const fSell = parseFloat(dto.formattedSellAmount || '0');
+  const fBuy = parseFloat(dto.formattedBuyAmount || '0');
+
+  return {
+    id: BigInt(dto.onChainOrderId),
+    creator: dto.creator,
+    matchedBy: dto.matcher || '0x0000000000000000000000000000000000000000',
+    sellToken: dto.sellToken?.address || '',
+    buyToken: dto.buyToken?.address || '',
+    sellAmount,
+    buyAmount,
+    targetChainId: targetChainId,
+    targetAddress: dto.targetAddress || '',
+    minTimelock: BigInt(0),
+    expiresAt: dto.expiresAt ? BigInt(dto.expiresAt) : BigInt(0),
+    status: dto.status,
+    // UnifiedOrder extensions
+    price: fSell > 0 ? fBuy / fSell : 0,
+    inversePrice: fBuy > 0 ? fSell / fBuy : 0,
+    sellSymbol: dto.sellToken?.symbol || '???',
+    buySymbol: dto.buyToken?.symbol || '???',
+    formattedSellAmount: dto.formattedSellAmount,
+    formattedBuyAmount: dto.formattedBuyAmount,
+    sourceChainIdNum: sourceChainId,
+    targetChainIdNum: targetChainId,
+    orderType: dto.orderType,
+    // SUI same-chain meta (if applicable)
+    suiSameChainMeta: undefined,
+  };
+}
+
 /** Parse chain ID: numeric string → number, "sui:testnet" → string. */
 function parseChainId(id: string): number | string {
   if (id.includes(':')) return id; // SUI chain IDs like "sui:testnet"

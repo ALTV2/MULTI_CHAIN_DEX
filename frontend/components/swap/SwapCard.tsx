@@ -1,10 +1,8 @@
 'use client';
 
-import { useMemo, useEffect } from 'react';
+import { useMemo } from 'react';
 import { useAccount } from 'wagmi';
 import { useCurrentAccount } from '@mysten/dapp-kit';
-import { updateSwap } from '@/lib/utils/swapStorage';
-import { useSuiSwap } from '@/hooks/useSuiHTLC';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { SwapStepper } from './SwapStepper';
@@ -14,8 +12,6 @@ import { getPhaseDescription } from '@/lib/utils/swapPhase';
 import { chainConfig, SupportedChainId } from '@/lib/contracts/addresses';
 import { getTokenByAddress } from '@/lib/constants/tokens';
 import { formatAmount } from '@/lib/utils/formatAmount';
-import { useDetectCrossChainHTLC } from '@/hooks/useDetectCrossChainHTLC';
-import { useSettingsStore } from '@/stores/useSettingsStore';
 import type { ActiveSwap } from '@/types/swap';
 
 function getTimelockCountdown(timelock: bigint | undefined): string {
@@ -75,72 +71,11 @@ export function SwapCard({ swap, onUpdate }: SwapCardProps) {
   const isEvmTarget = typeof meta.targetChainId === 'number';
   const isSuiTarget = typeof meta.targetChainId === 'string' && (meta.targetChainId as string).includes('sui');
 
-  // Case 1: SUI→EVM — detect matcher's EVM HTLC at order_created phase (creator has EVM wallet)
-  const shouldDetectEvmHTLC = isSuiSource && isEvmTarget && !!address && phase === 'order_created' && meta.role === 'creator';
+  // HTLC detection is now handled by backend indexer — no direct RPC polling needed.
+  // The SwapDto from backend already contains HTLC IDs and statuses.
+  const detectedHTLC = null; // Backend provides this data via SwapResponse
 
-  // Case 2: EVM→SUI — detect matcher's SUI HTLC at creator_htlc_created or matcher_htlc_created phase (creator has SUI wallet)
-  // creatorSuiAddress is the SUI address stored in order's targetAddress (where creator wants to receive)
-  const creatorSuiAddress = meta.creatorSuiAddress || (isSuiTarget ? meta.targetAddress : undefined);
-  // Start detection at creator_htlc_created so we don't miss the window waiting for a phase that requires SUI data to advance
-  const shouldDetectSuiHTLC = isEvmSource && isSuiTarget && !!creatorSuiAddress &&
-    (phase === 'creator_htlc_created' || phase === 'matcher_htlc_created') && meta.role === 'creator';
-
-  const { detectedHTLC, isDetecting } = useDetectCrossChainHTLC({
-    orderId: meta.orderId,
-    sourceChainId: meta.sourceChainId,
-    targetChainId: meta.targetChainId,
-    creatorAddress: address || meta.creator,
-    creatorSuiAddress: creatorSuiAddress,
-    enabled: shouldDetectEvmHTLC || shouldDetectSuiHTLC,
-  });
-
-  // When a cross-chain HTLC is detected, persist its IDs to creator's localStorage so
-  // phase can advance (swapPhase.ts infers matcher HTLC Active from matcherHtlcObjectId)
-  // and CreatorWithdrawAction can use the object ID even after a page refresh.
-  useEffect(() => {
-    if (!detectedHTLC || !address) return;
-    // EVM→SUI: persist matcher's SUI HTLC object ID
-    if (shouldDetectSuiHTLC && !meta.matcherHtlcObjectId && detectedHTLC.htlcObjectId) {
-      updateSwap(address, meta.orderId, {
-        matcherHtlcObjectId: detectedHTLC.htlcObjectId,
-        matcherHtlcSwapId: detectedHTLC.swapId,
-      }, meta.sourceChainId);
-    }
-    // SUI→EVM: persist matcher's EVM HTLC swap ID
-    if (shouldDetectEvmHTLC && !meta.matcherHtlcSwapId && detectedHTLC.swapId) {
-      updateSwap(address, meta.orderId, {
-        matcherHtlcSwapId: detectedHTLC.swapId,
-      }, meta.sourceChainId);
-    }
-  }, [detectedHTLC, address, shouldDetectSuiHTLC, shouldDetectEvmHTLC, meta.orderId, meta.sourceChainId, meta.matcherHtlcObjectId, meta.matcherHtlcSwapId]);
-
-  // Fix 4: For EVM→SUI matcher, poll matcher's SUI HTLC on-chain status to detect when creator withdrew.
-  // Without this, the matcher's phase stays at matcher_htlc_created because matcherHtlcWithdrawn
-  // flag is only set in the creator's localStorage, not the matcher's.
-  const shouldPollSuiHtlcStatus =
-    isEvmSource && isSuiTarget && meta.role === 'matcher' &&
-    phase === 'matcher_htlc_created' && !!meta.matcherHtlcObjectId &&
-    !meta.matcherHtlcWithdrawn;
-
-  const suiHtlcStatus = useSuiSwap(shouldPollSuiHtlcStatus ? meta.matcherHtlcObjectId : undefined);
-
-  const autoUpdate = useSettingsStore((s) => s.autoUpdate);
-
-  useEffect(() => {
-    if (!shouldPollSuiHtlcStatus) return;
-    suiHtlcStatus.refetch();
-    if (!autoUpdate) return;
-    const interval = setInterval(() => suiHtlcStatus.refetch(), 30_000);
-    return () => clearInterval(interval);
-  }, [shouldPollSuiHtlcStatus, autoUpdate]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!shouldPollSuiHtlcStatus || !address || !suiHtlcStatus.data) return;
-    if (suiHtlcStatus.data.status === 2) { // 2 = Withdrawn
-      updateSwap(address, meta.orderId, { matcherHtlcWithdrawn: true }, meta.sourceChainId);
-      onUpdate();
-    }
-  }, [suiHtlcStatus.data?.status, shouldPollSuiHtlcStatus, address]); // eslint-disable-line react-hooks/exhaustive-deps
+  // SUI HTLC status polling is now handled by backend indexer.
 
   return (
     <Card className={`p-5 ${isFailed ? 'border-2 border-accent-red/50 bg-accent-red/5' : ''}`}>
@@ -216,28 +151,13 @@ export function SwapCard({ swap, onUpdate }: SwapCardProps) {
         <SwapStepper phase={phase} isSameChain={isSameChain} />
       )}
 
-      {/* Auto-detected HTLC notification */}
-      {detectedHTLC && (
-        <div className="mb-4 rounded-lg px-3 py-2 bg-accent-green/10 border border-accent-green/30">
-          <div className="flex items-center gap-2 mb-1">
-            <svg className="w-4 h-4 text-accent-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span className="font-semibold text-accent-green">Match Detected!</span>
-          </div>
-          <p className="text-sm text-gray-300">
-            {shouldDetectSuiHTLC
-              ? `Counterparty locked tokens on ${targetConfig?.shortName}. You can now withdraw them using your secret.`
-              : `Someone matched your order and created HTLC on ${targetConfig?.shortName}. You can now create your counter-HTLC on ${sourceConfig?.shortName} to complete the swap.`}
-          </p>
-        </div>
-      )}
+      {/* HTLC detection handled by backend indexer — phase updates automatically */}
 
       {/* Phase description */}
       <div className={`text-sm mb-4 rounded-lg px-3 py-2 ${
         isFailed
           ? 'bg-accent-red/10 text-accent-red border border-accent-red/30'
-          : isDetecting
+          : false /* isDetecting removed — backend handles */
           ? 'bg-accent-blue/10 text-accent-blue border border-accent-blue/30'
           : 'text-gray-400'
       }`}>
@@ -249,7 +169,7 @@ export function SwapCard({ swap, onUpdate }: SwapCardProps) {
             <span className="font-semibold">Trade Failed</span>
           </div>
         )}
-        {isDetecting && (
+        {false /* isDetecting removed — backend handles */ && (
           <div className="flex items-center gap-2 mb-1">
             <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>

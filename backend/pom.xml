@@ -17,6 +17,33 @@
     <packaging>pom</packaging>
     <name>Multi-Chain DEX Backend (parent)</name>
     <description>Aggregator for the indexer service and the notification service</description>
+    <url>https://github.com/ALTV2/MULTI_CHAIN_DEX</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <name>Alexandr Tveritin</name>
+            <email>tveritin09@gmail.com</email>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:https://github.com/ALTV2/MULTI_CHAIN_DEX.git</connection>
+        <developerConnection>scm:git:git@github.com:ALTV2/MULTI_CHAIN_DEX.git</developerConnection>
+        <url>https://github.com/ALTV2/MULTI_CHAIN_DEX</url>
+    </scm>
+
+    <issueManagement>
+        <system>GitHub Issues</system>
+        <url>https://github.com/ALTV2/MULTI_CHAIN_DEX/issues</url>
+    </issueManagement>
 
     <properties>
         <java.version>21</java.version>

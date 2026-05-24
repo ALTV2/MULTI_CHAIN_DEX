@@ -104,7 +104,7 @@ describe("Trade", function () {
 
       // Check order status
       const order = await orderBook.getOrder(1);
-      expect(order.status).to.equal(2); // Completed
+      expect(order.status).to.equal(1); // Completed
       expect(await orderBook.isOrderActive(1)).to.be.false;
     });
 

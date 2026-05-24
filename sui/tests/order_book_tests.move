@@ -107,7 +107,7 @@ module dex::order_book_tests {
         // Bob should receive TKA
         ts::next_tx(&mut scenario, BOB);
         {
-            let received = ts::take_from_sender(&scenario);
+            let received = ts::take_from_sender<coin::Coin<TEST_TOKEN_A>>(&scenario);
             assert!(coin::value(&received) == 1000, 0);
             ts::return_to_sender(&scenario, received);
         };
@@ -115,7 +115,7 @@ module dex::order_book_tests {
         // Alice should receive TKB
         ts::next_tx(&mut scenario, ALICE);
         {
-            let received = ts::take_from_sender(&scenario);
+            let received = ts::take_from_sender<coin::Coin<TEST_TOKEN_B>>(&scenario);
             assert!(coin::value(&received) == 500, 0);
             ts::return_to_sender(&scenario, received);
         };
@@ -177,7 +177,7 @@ module dex::order_book_tests {
         // Alice should get tokens back
         ts::next_tx(&mut scenario, ALICE);
         {
-            let received = ts::take_from_sender(&scenario);
+            let received = ts::take_from_sender<coin::Coin<TEST_TOKEN_A>>(&scenario);
             assert!(coin::value(&received) == 1000, 0);
             ts::return_to_sender(&scenario, received);
         };

@@ -252,7 +252,7 @@ describe("CrossChainOrderBook", function () {
         ccob.connect(matcher).matchOrder(orderId, htlcSwapId)
       ).to.be.revertedWithCustomError(ccob, "OrderNotActive");
 
-      // Order status remains Active (not changed to Expired) because tx reverted
+      // Order status remains Active because the matching tx reverted
       const order = await ccob.getOrder(orderId);
       expect(order.status).to.equal(0); // Still Active
     });
@@ -392,7 +392,7 @@ describe("CrossChainOrderBook", function () {
         ccob.connect(alice).reactivateOrder(orderId)
       ).to.be.revertedWithCustomError(ccob, "InvalidExpiry");
 
-      // Order status remains Matched (not changed to Expired) because tx reverted
+      // Order status remains Matched because the reactivation tx reverted
       const order = await ccob.getOrder(orderId);
       expect(order.status).to.equal(1); // Still Matched
     });

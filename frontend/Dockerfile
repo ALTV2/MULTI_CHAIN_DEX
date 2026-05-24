@@ -3,7 +3,7 @@ FROM node:22-alpine AS deps
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm ci --ignore-scripts
+RUN npm install --ignore-scripts
 
 # Stage 2: Build the application
 FROM node:22-alpine AS build
@@ -24,7 +24,7 @@ ENV NEXT_PUBLIC_SEPOLIA_RPC_URL=$NEXT_PUBLIC_SEPOLIA_RPC_URL
 ENV NEXT_PUBLIC_POLYGON_AMOY_RPC_URL=$NEXT_PUBLIC_POLYGON_AMOY_RPC_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 
-RUN NODE_OPTIONS="--max-old-space-size=2048" npm run build
+RUN NODE_OPTIONS="--max-old-space-size=1024" npm run build
 
 # Stage 3: Production runner
 FROM node:22-alpine AS runner

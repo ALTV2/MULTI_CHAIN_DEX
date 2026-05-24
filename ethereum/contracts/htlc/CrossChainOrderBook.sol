@@ -17,8 +17,7 @@ contract CrossChainOrderBook is Ownable, ReentrancyGuard {
         Active,     // Order is open for matching
         Matched,    // Order has been matched, HTLC in progress
         Completed,  // Swap completed successfully
-        Cancelled,  // Order cancelled by creator
-        Expired     // Order expired
+        Cancelled   // Order cancelled by creator
     }
 
     struct CrossChainOrder {
@@ -80,7 +79,6 @@ contract CrossChainOrderBook is Ownable, ReentrancyGuard {
 
     event OrderCompleted(uint256 indexed orderId);
     event OrderCancelled(uint256 indexed orderId);
-    event OrderExpired(uint256 indexed orderId);
     event ChainAdded(uint256 chainId);
     event ChainRemoved(uint256 chainId);
 
@@ -200,11 +198,9 @@ contract CrossChainOrderBook is Ownable, ReentrancyGuard {
         CrossChainOrder storage order = orders[_orderId];
 
         if (order.status != OrderStatus.Active) revert OrderNotActive();
-        if (block.timestamp >= order.expiresAt) {
-            order.status = OrderStatus.Expired;
-            emit OrderExpired(_orderId);
-            revert OrderNotActive();
-        }
+        // Expiry is enforced off-chain by the indexer (comparing expiresAt);
+        // matching an expired order is simply rejected here.
+        if (block.timestamp >= order.expiresAt) revert OrderNotActive();
 
         order.status = OrderStatus.Matched;
         order.matchedBy = msg.sender;
@@ -252,11 +248,7 @@ contract CrossChainOrderBook is Ownable, ReentrancyGuard {
 
         if (order.status != OrderStatus.Matched) revert OrderNotActive();
         if (msg.sender != order.creator) revert NotOrderCreator();
-        if (block.timestamp >= order.expiresAt) {
-            order.status = OrderStatus.Expired;
-            emit OrderExpired(_orderId);
-            revert InvalidExpiry();
-        }
+        if (block.timestamp >= order.expiresAt) revert InvalidExpiry();
 
         order.status = OrderStatus.Active;
         order.matchedBy = address(0);

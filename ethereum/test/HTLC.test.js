@@ -146,6 +146,14 @@ describe("HTLC", function () {
       expect(swap.status).to.equal(2); // Withdrawn
     });
 
+    it("should revert on double withdrawal", async function () {
+      await htlc.connect(bob).withdraw(swapId, SECRET);
+
+      // A second withdrawal of an already-withdrawn swap is rejected
+      await expect(htlc.connect(bob).withdraw(swapId, SECRET))
+        .to.be.revertedWithCustomError(htlc, "SwapNotActive");
+    });
+
     it("should revert with incorrect secret", async function () {
       const wrongSecret = ethers.encodeBytes32String("wrongsecret");
 
@@ -228,6 +236,102 @@ describe("HTLC", function () {
 
       const bobSwaps = await htlc.getSwapsAsParticipant(bob.address);
       expect(bobSwaps).to.include(swapId);
+    });
+
+    it("isSwapActive reflects swap state", async function () {
+      const swapId = ethers.encodeBytes32String("swapActive");
+      const timelock = (await time.latest()) + 3600;
+      expect(await htlc.isSwapActive(swapId)).to.equal(false); // not created yet
+      await htlc.connect(alice).createSwap(
+        swapId, bob.address, HASHLOCK, timelock, ethers.ZeroAddress, 0, { value: ethers.parseEther("1") }
+      );
+      expect(await htlc.isSwapActive(swapId)).to.equal(true);
+      await htlc.connect(bob).withdraw(swapId, SECRET);
+      expect(await htlc.isSwapActive(swapId)).to.equal(false); // withdrawn
+    });
+
+    it("generateSwapId matches the off-chain keccak256 formula", async function () {
+      const timelock = (await time.latest()) + 3600;
+      const chainId = (await ethers.provider.getNetwork()).chainId;
+      const onChain = await htlc.generateSwapId(alice.address, bob.address, HASHLOCK, timelock);
+      const expected = ethers.keccak256(ethers.solidityPacked(
+        ["address", "address", "bytes32", "uint256", "uint256"],
+        [alice.address, bob.address, HASHLOCK, timelock, chainId]
+      ));
+      expect(onChain).to.equal(expected);
+    });
+  });
+
+  describe("ERC20 withdraw / refund paths", function () {
+    let swapId, timelock;
+    const amount = ethers.parseEther("100");
+
+    beforeEach(async function () {
+      timelock = (await time.latest()) + 3600;
+      await token.connect(alice).approve(await htlc.getAddress(), amount);
+    });
+
+    it("withdraws ERC20 tokens to the participant", async function () {
+      swapId = ethers.encodeBytes32String("erc20w");
+      await htlc.connect(alice).createSwap(swapId, bob.address, HASHLOCK, timelock, await token.getAddress(), amount);
+      await expect(htlc.connect(bob).withdraw(swapId, SECRET)).to.emit(htlc, "SwapWithdrawn");
+      expect(await token.balanceOf(bob.address)).to.equal(amount);
+    });
+
+    it("refunds ERC20 tokens to the initiator after timelock", async function () {
+      swapId = ethers.encodeBytes32String("erc20r");
+      await htlc.connect(alice).createSwap(swapId, bob.address, HASHLOCK, timelock, await token.getAddress(), amount);
+      await time.increase(3601);
+      await expect(htlc.connect(alice).refund(swapId)).to.emit(htlc, "SwapRefunded");
+      expect(await token.balanceOf(alice.address)).to.equal(ethers.parseEther("1000"));
+    });
+  });
+
+  describe("createSwap validation branches", function () {
+    let timelock;
+    beforeEach(async function () { timelock = (await time.latest()) + 3600; });
+
+    it("reverts on zero participant", async function () {
+      await expect(htlc.connect(alice).createSwap(
+        ethers.encodeBytes32String("p0"), ethers.ZeroAddress, HASHLOCK, timelock, ethers.ZeroAddress, 0, { value: 1n }
+      )).to.be.revertedWithCustomError(htlc, "InvalidParticipant");
+    });
+    it("reverts on past timelock", async function () {
+      await expect(htlc.connect(alice).createSwap(
+        ethers.encodeBytes32String("t0"), bob.address, HASHLOCK, 1, ethers.ZeroAddress, 0, { value: 1n }
+      )).to.be.revertedWithCustomError(htlc, "InvalidTimelock");
+    });
+    it("reverts on zero hashlock", async function () {
+      await expect(htlc.connect(alice).createSwap(
+        ethers.encodeBytes32String("h0"), bob.address, ethers.ZeroHash, timelock, ethers.ZeroAddress, 0, { value: 1n }
+      )).to.be.revertedWithCustomError(htlc, "InvalidHashlock");
+    });
+    it("reverts on zero native value", async function () {
+      await expect(htlc.connect(alice).createSwap(
+        ethers.encodeBytes32String("n0"), bob.address, HASHLOCK, timelock, ethers.ZeroAddress, 0, { value: 0n }
+      )).to.be.revertedWithCustomError(htlc, "InvalidAmount");
+    });
+    it("reverts on zero ERC20 amount", async function () {
+      await expect(htlc.connect(alice).createSwap(
+        ethers.encodeBytes32String("e0"), bob.address, HASHLOCK, timelock, await token.getAddress(), 0
+      )).to.be.revertedWithCustomError(htlc, "InvalidAmount");
+    });
+    it("reverts when ETH is sent with an ERC20 swap", async function () {
+      await token.connect(alice).approve(await htlc.getAddress(), ethers.parseEther("100"));
+      await expect(htlc.connect(alice).createSwap(
+        ethers.encodeBytes32String("ee"), bob.address, HASHLOCK, timelock, await token.getAddress(), ethers.parseEther("100"), { value: 1n }
+      )).to.be.revertedWithCustomError(htlc, "InvalidAmount");
+    });
+  });
+
+  describe("withdraw / refund on a non-existent swap", function () {
+    it("withdraw reverts SwapNotActive", async function () {
+      await expect(htlc.connect(bob).withdraw(ethers.encodeBytes32String("ghost"), SECRET))
+        .to.be.revertedWithCustomError(htlc, "SwapNotActive");
+    });
+    it("refund reverts SwapNotActive", async function () {
+      await expect(htlc.connect(alice).refund(ethers.encodeBytes32String("ghost2")))
+        .to.be.revertedWithCustomError(htlc, "SwapNotActive");
     });
   });
 });

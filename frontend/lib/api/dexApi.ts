@@ -188,21 +188,33 @@ export function fetchSwapHistory(params: {
   return fetchJson(`/swaps/history?${q}`);
 }
 
-/** Register or update the EVM→SUI address mapping for the caller. */
-export function registerCrossChainAddress(evmAddress: string, suiAddress: string): Promise<void> {
-  return fetchJson('/addresses/cross-chain', {
-    method: 'POST',
-    body: JSON.stringify({ evmAddress, suiAddress }),
-  }).then(() => {});
+export interface OrderMetadataRequest {
+  /** Source chain ID where the order lives, e.g. "11155111" or "sui:testnet". */
+  chainId: string;
+  /** On-chain order ID (decimal string). */
+  onChainOrderId: string;
+  orderType: 'SAME_CHAIN' | 'CROSS_CHAIN';
+  role: 'creator' | 'matcher';
+  /** Full target-side address — may exceed the on-chain field (e.g. a 32-byte SUI address). */
+  targetAddress?: string;
+  /** Opt-in notification email — stored off-chain only. */
+  email?: string;
 }
 
-/** Look up the full 32-byte SUI address for a given EVM address. Returns null if not found. */
-export async function getCreatorSuiAddress(evmAddress: string): Promise<string | null> {
+/**
+ * Attach off-chain metadata (full target address + opt-in email) to an order.
+ * Best-effort: the backend forces an index cycle if the order is not yet present.
+ * Returns true if the metadata was attached (HTTP 200), false otherwise.
+ */
+export async function attachOrderMetadata(req: OrderMetadataRequest): Promise<boolean> {
   try {
-    const data = await fetchJson<{ suiAddress: string }>(`/addresses/cross-chain?evmAddress=${evmAddress}`);
-    return data.suiAddress;
+    await fetchJson('/orders/metadata', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+    return true;
   } catch {
-    return null;
+    return false;
   }
 }
 

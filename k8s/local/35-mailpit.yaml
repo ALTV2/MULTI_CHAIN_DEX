@@ -1,0 +1,39 @@
+# Local SMTP sink for development email. Web UI reachable via port-forward:
+#   kubectl -n multichain-dex port-forward svc/mailpit 8025:8025
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailpit
+  namespace: multichain-dex
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mailpit
+  template:
+    metadata:
+      labels:
+        app: mailpit
+    spec:
+      containers:
+        - name: mailpit
+          image: axllent/mailpit:latest
+          ports:
+            - containerPort: 1025
+            - containerPort: 8025
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailpit
+  namespace: multichain-dex
+spec:
+  selector:
+    app: mailpit
+  ports:
+    - name: smtp
+      port: 1025
+      targetPort: 1025
+    - name: web
+      port: 8025
+      targetPort: 8025

@@ -41,9 +41,12 @@ export function MySwaps({ initialFilter = 'inProgress' }: MySwapsProps = {}) {
     [historyPage]
   );
 
+  const TERMINAL_PHASES = new Set(['completed', 'refundable', 'refunded']);
+
   // Split active into "In Progress" (matched+) and "Open" (order_created)
+  // Terminal phases (completed/refundable/refunded) belong in History only
   const inProgressOrders = useMemo(
-    () => activeSwaps.filter((s) => s.phase !== 'order_created'),
+    () => activeSwaps.filter((s) => s.phase !== 'order_created' && !TERMINAL_PHASES.has(s.phase)),
     [activeSwaps]
   );
 

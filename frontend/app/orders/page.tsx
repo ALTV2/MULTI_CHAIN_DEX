@@ -15,7 +15,6 @@ import { getTradingMode } from '@/lib/utils/tradingMode';
 import { useTranslation } from '@/hooks/useTranslation';
 import type { UnifiedOrder } from '@/types/order-unified';
 import { getTokensByChainId } from '@/lib/constants/tokens';
-import { LocalStorageDebug } from '@/components/debug/LocalStorageDebug';
 
 export default function OrdersPage() {
   const searchParams = useSearchParams();
@@ -131,7 +130,6 @@ export default function OrdersPage() {
 
       {activeTab === 'myorders' && (
         <TabPanel>
-          <LocalStorageDebug />
           <MySwaps initialFilter={myOrdersFilter} />
         </TabPanel>
       )}

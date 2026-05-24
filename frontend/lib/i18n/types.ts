@@ -107,7 +107,6 @@ export interface Translations {
   'profile.connectWalletDesc': string;
   'profile.tabs.overview': string;
   'profile.tabs.wallets': string;
-  'profile.tabs.history': string;
   'profile.tabs.settings': string;
   'profile.balance': string;
   'profile.inProgress': string;
@@ -118,16 +117,18 @@ export interface Translations {
   'profile.settings.secretStorageDesc': string;
   'profile.settings.localStorage': string;
   'profile.settings.localStorageDesc': string;
-  'profile.settings.database': string;
-  'profile.settings.databaseDesc': string;
   'profile.settings.showOnce': string;
   'profile.settings.showOnceDesc': string;
+  'profile.settings.notifications': string;
+  'profile.settings.notificationsDesc': string;
+  'profile.settings.emailPlaceholder': string;
+  'profile.settings.emailInvalid': string;
+  'profile.settings.emailNote': string;
   'profile.settings.targetWallets': string;
   'profile.settings.targetWalletsDesc': string;
   'profile.settings.noWallets': string;
   'profile.settings.disconnect': string;
   'profile.settings.disconnectDesc': string;
-  'profile.signedIn': string;
 
   // Common
   'common.loading': string;

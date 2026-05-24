@@ -16,7 +16,6 @@ import {
 import { Transaction } from '@mysten/sui/transactions';
 import { getContractAddress } from '@/lib/contracts/addresses';
 import { hexToBytes } from '@/lib/utils/crossChainCrypto';
-import { useSettingsStore } from '@/stores/useSettingsStore';
 
 const PACKAGE_ID = getContractAddress('sui:testnet', 'htlc');
 const CLOCK_OBJECT_ID = '0x6'; // SUI Clock object
@@ -420,7 +419,6 @@ export function useSuiSecretWatcherByObjectId(
   onSecretRevealed: (secret: `0x${string}`) => void
 ) {
   const client = useSuiClient();
-  const autoUpdate = useSettingsStore((s) => s.autoUpdate);
   const [isWatching, setIsWatching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isSearching = useRef(false);
@@ -455,7 +453,6 @@ export function useSuiSecretWatcherByObjectId(
     };
 
     pollForSecret();
-    if (!autoUpdate) return () => { isMounted = false; setIsWatching(false); isSearching.current = false; };
     const interval = setInterval(pollForSecret, SUI_SECRET_POLL_INTERVAL_MS);
 
     return () => {
@@ -464,7 +461,7 @@ export function useSuiSecretWatcherByObjectId(
       setIsWatching(false);
       isSearching.current = false;
     };
-  }, [client, objectId, onSecretRevealed, autoUpdate]);
+  }, [client, objectId, onSecretRevealed]);
 
   return { isWatching, error };
 }
@@ -479,7 +476,6 @@ export function useSuiSecretWatcher(
   onSecretRevealed: (secret: `0x${string}`) => void
 ) {
   const client = useSuiClient();
-  const autoUpdate = useSettingsStore((s) => s.autoUpdate);
   const [isWatching, setIsWatching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isSearching = useRef(false);
@@ -514,7 +510,6 @@ export function useSuiSecretWatcher(
     };
 
     pollForSecret();
-    if (!autoUpdate) return () => { isMounted = false; setIsWatching(false); isSearching.current = false; };
     const interval = setInterval(pollForSecret, SUI_SECRET_POLL_INTERVAL_MS);
 
     return () => {
@@ -523,7 +518,7 @@ export function useSuiSecretWatcher(
       setIsWatching(false);
       isSearching.current = false;
     };
-  }, [client, swapId, onSecretRevealed, autoUpdate]);
+  }, [client, swapId, onSecretRevealed]);
 
   return { isWatching, error };
 }

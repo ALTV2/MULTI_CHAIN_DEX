@@ -18,34 +18,99 @@ services:
     networks:
       - dex-network
 
-  backend:
+  # Apache Kafka в режиме KRaft (без ZooKeeper). Несёт события смены фазы ордера
+  # от индексатора к сервису уведомлений (топик dex.orders).
+  kafka:
+    image: apache/kafka:3.7.0
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: dex-kraft-cluster-00001
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - dex-network
+
+  # Локальная «ловушка» SMTP — захватывает письма уведомлений (UI на :8025).
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+    restart: unless-stopped
+    networks:
+      - dex-network
+
+  indexer:
     build:
       context: ./backend
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.indexer
     ports:
       - "8080:8080"
     environment:
-      # Database
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: ${DB_NAME:-multichain_dex}
       DB_USER: ${DB_USER:-dex}
       DB_PASSWORD: ${DB_PASSWORD:-dex_password}
 
-      # RPC URLs (Alchemy — server-side only, never exposed to browser)
-      SEPOLIA_RPC_URL: ${SEPOLIA_RPC_URL:-https://eth-sepolia.g.alchemy.com/v2/VPxg_-3LrpC7xW0yO-AGi}
-      POLYGON_RPC_URL: ${POLYGON_RPC_URL:-https://polygon-amoy.g.alchemy.com/v2/VPxg_-3LrpC7xW0yO-AGi}
-      SUI_RPC_URL: ${SUI_RPC_URL:-https://sui-testnet.g.alchemy.com/v2/VPxg_-3LrpC7xW0yO-AGi}
+      # RPC к реестрам — только server-side, никогда не уходит в браузер.
+      # Задавайте в .env (см. .env.example). В коде ключей нет.
+      SEPOLIA_RPC_URL: ${SEPOLIA_RPC_URL}
+      POLYGON_RPC_URL: ${POLYGON_RPC_URL}
+      SUI_RPC_URL: ${SUI_RPC_URL}
 
-      # Indexer
       INDEXER_ENABLED: ${INDEXER_ENABLED:-true}
       INDEXER_INTERVAL: ${INDEXER_INTERVAL:-10000}
 
-      # CORS
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
     depends_on:
       db:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - dex-network
+
+  notification:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.notification
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      NOTIFICATIONS_TOPIC: ${NOTIFICATIONS_TOPIC:-dex.orders}
+      # По умолчанию шлём в mailpit; для реального SMTP-провайдера переопределите.
+      MAIL_HOST: ${MAIL_HOST:-mailpit}
+      MAIL_PORT: ${MAIL_PORT:-1025}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_SMTP_AUTH: ${MAIL_SMTP_AUTH:-false}
+      MAIL_SMTP_STARTTLS: ${MAIL_SMTP_STARTTLS:-false}
+      NOTIFICATIONS_FROM: ${NOTIFICATIONS_FROM:-noreply@multichain-dex.local}
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
     restart: unless-stopped
     networks:
       - dex-network
@@ -57,15 +122,14 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080/api/v2}
         NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: ${NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID:-}
-        # RPC URLs for wagmi transport (balance/allowance only — order data from backend)
-        NEXT_PUBLIC_SEPOLIA_RPC_URL: ${SEPOLIA_RPC_URL:-https://eth-sepolia.g.alchemy.com/v2/VPxg_-3LrpC7xW0yO-AGi}
-        NEXT_PUBLIC_POLYGON_AMOY_RPC_URL: ${POLYGON_RPC_URL:-https://polygon-amoy.g.alchemy.com/v2/VPxg_-3LrpC7xW0yO-AGi}
+        NEXT_PUBLIC_SEPOLIA_RPC_URL: ${SEPOLIA_RPC_URL}
+        NEXT_PUBLIC_POLYGON_AMOY_RPC_URL: ${POLYGON_RPC_URL}
     ports:
       - "3000:3000"
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080/api/v2}
     depends_on:
-      - backend
+      - indexer
     restart: unless-stopped
     networks:
       - dex-network

@@ -1,6 +1,6 @@
 import { http, createConfig } from 'wagmi';
 import { sepolia, polygonAmoy } from 'wagmi/chains';
-import { injected, coinbaseWallet, walletConnect } from 'wagmi/connectors';
+import { injected, walletConnect } from 'wagmi/connectors';
 
 const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || '';
 
@@ -11,7 +11,6 @@ const polygonRpc = process.env.NEXT_PUBLIC_POLYGON_AMOY_RPC_URL || 'https://rpc-
 
 const connectors = [
   injected(),
-  coinbaseWallet({ appName: 'Multi-Chain DEX' }),
   ...(projectId ? [walletConnect({ projectId })] : []),
 ];
 

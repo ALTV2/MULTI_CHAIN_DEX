@@ -1,0 +1,28 @@
+# Multi-module build — context must be ./backend (the Maven reactor root), because
+# each service inherits from ../pom.xml. Builds only the indexer module + its deps.
+FROM maven:3.9-eclipse-temurin-21-alpine AS build
+WORKDIR /build
+
+# Poms first so dependency resolution layers cache independently of source changes.
+COPY pom.xml ./
+COPY indexer-service/pom.xml indexer-service/pom.xml
+COPY notification-service/pom.xml notification-service/pom.xml
+
+COPY indexer-service/src indexer-service/src
+RUN mvn -q -pl indexer-service -am package -DskipTests
+
+# ── Runtime ──
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+
+RUN addgroup -S dex && adduser -S dex -G dex
+USER dex
+
+COPY --from=build /build/indexer-service/target/*.jar app.jar
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD wget -q --spider http://localhost:8080/api/v2/health || exit 1
+
+ENTRYPOINT ["java", "-jar", "app.jar"]

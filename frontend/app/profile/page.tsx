@@ -10,8 +10,6 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Tabs, TabPanel } from '@/components/ui/Tabs';
 import { WalletList } from '@/components/profile/WalletList';
-import { SwapHistoryTable } from '@/components/profile/SwapHistoryTable';
-import { useCurrentUser } from '@/hooks/useAuth';
 import { useActiveSwaps, useSwapHistory } from '@/hooks/useDexApi';
 import { swapDtoToActiveSwap } from '@/lib/api/dexApiMapper';
 import { useSettingsStore, type SecretStorageMode } from '@/stores/useSettingsStore';
@@ -30,7 +28,6 @@ export default function ProfilePage() {
   const { data: balance } = useBalance({ address });
   const { disconnect } = useDisconnect();
   const { mutate: disconnectSui } = useDisconnectWallet();
-  const { isAuthenticated } = useCurrentUser();
   const { data: activeSwapDtos } = useActiveSwaps();
   const { data: historyPage } = useSwapHistory();
   const activeSwaps = (activeSwapDtos || []).map(swapDtoToActiveSwap);
@@ -85,7 +82,6 @@ export default function ProfilePage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {isAuthenticated && <Badge variant="success" dot>{t('profile.signedIn')}</Badge>}
           {hasEvm && currentChainConfig && (
             <Badge
               variant="info"
@@ -107,7 +103,6 @@ export default function ProfilePage() {
         tabs={[
           { id: 'overview', label: t('profile.tabs.overview') },
           { id: 'wallets', label: t('profile.tabs.wallets') },
-          { id: 'history', label: t('profile.tabs.history') },
           { id: 'settings', label: t('profile.tabs.settings') },
         ]}
         activeTab={activeTab}
@@ -222,12 +217,6 @@ export default function ProfilePage() {
       {activeTab === 'wallets' && (
         <TabPanel>
           <WalletList />
-        </TabPanel>
-      )}
-
-      {activeTab === 'history' && (
-        <TabPanel>
-          <SwapHistoryTable />
         </TabPanel>
       )}
 
@@ -354,40 +343,18 @@ function SettingsPanel({
   hasEvm: boolean;
   hasSui: boolean;
 }) {
-  const { secretStorage, setSecretStorage, autoUpdate, setAutoUpdate, defaultTargetWallets } = useSettingsStore();
+  const { secretStorage, setSecretStorage, defaultTargetWallets, notificationEmail, setNotificationEmail } = useSettingsStore();
   const { t } = useTranslation();
+
+  const emailValid = !notificationEmail || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(notificationEmail);
 
   const secretOptions: { value: SecretStorageMode; label: string; desc: string }[] = [
     { value: 'local', label: t('profile.settings.localStorage'), desc: t('profile.settings.localStorageDesc') },
-    { value: 'database', label: t('profile.settings.database'), desc: t('profile.settings.databaseDesc') },
     { value: 'show_once', label: t('profile.settings.showOnce'), desc: t('profile.settings.showOnceDesc') },
   ];
 
   return (
     <div className="max-w-2xl space-y-6">
-      {/* Auto-Update */}
-      <Card>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Auto-Update</h3>
-              <p className="text-sm text-gray-500 mt-1">
-                Automatically refresh blockchain data every 30 seconds. When disabled, use the Refresh button to update manually. Disabling reduces RPC requests to Alchemy.
-              </p>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={autoUpdate}
-                onChange={(e) => setAutoUpdate(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-gray-300 dark:bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent-blue"></div>
-            </label>
-          </div>
-        </CardContent>
-      </Card>
-
       {/* Secret Storage */}
       <Card>
         <CardContent className="space-y-4">
@@ -419,6 +386,31 @@ function SettingsPanel({
                 </div>
               </label>
             ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Notifications */}
+      <Card>
+        <CardContent className="space-y-4">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{t('profile.settings.notifications')}</h3>
+            <p className="text-sm text-gray-500 mt-1">{t('profile.settings.notificationsDesc')}</p>
+          </div>
+          <div className="space-y-1.5">
+            <input
+              type="email"
+              value={notificationEmail}
+              onChange={(e) => setNotificationEmail(e.target.value.trim())}
+              placeholder={t('profile.settings.emailPlaceholder')}
+              className={`w-full px-4 py-3 rounded-xl bg-light-hover dark:bg-dark-hover border text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-accent-blue/40 ${
+                emailValid ? 'border-light-border dark:border-dark-border' : 'border-accent-red'
+              }`}
+            />
+            {!emailValid && (
+              <p className="text-xs text-accent-red">{t('profile.settings.emailInvalid')}</p>
+            )}
+            <p className="text-xs text-gray-500">{t('profile.settings.emailNote')}</p>
           </div>
         </CardContent>
       </Card>

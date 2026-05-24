@@ -36,11 +36,11 @@ function getPhaseBadgeVariant(phase: string): 'success' | 'warning' | 'error' | 
 
 function getPhaseLabel(phase: string): string {
   const labels: Record<string, string> = {
-    order_created: 'Open',
+    order_created: 'Created',
     order_matched: 'Matched',
-    creator_htlc_created: 'Locking (1/2)',
-    matcher_htlc_created: 'Locked',
-    secret_revealed: 'Claiming',
+    creator_htlc_created: 'Lock 1',
+    matcher_htlc_created: 'Lock 2',
+    secret_revealed: 'Claim',
     completed: 'Completed',
     refundable: '⚠️ Trade Failed',
     refunded: '⚠️ Refunded',
@@ -140,21 +140,17 @@ export function SwapCard({ swap, onUpdate }: SwapCardProps) {
         </div>
       </div>
 
-      {/* Stepper — use flow-specific component for SUI cross-chain swaps */}
-      {isSuiSource && !isSameChain ? (
+      {/* Stepper */}
+      {!isSameChain ? (
         <CrossChainStepper
           phase={phase}
-          isSuiToEvm={!isSuiTarget}
+          swapType={isSuiSource ? 'sui_to_evm' : isSuiTarget ? 'evm_to_sui' : 'evm_to_evm'}
           role={meta.role}
-        />
-      ) : isSuiTarget && !isSuiSource ? (
-        <CrossChainStepper
-          phase={phase}
-          isSuiToEvm={false}
-          role={meta.role}
+          creatorHtlcStatus={swap.creatorHtlcStatus}
+          matcherHtlcStatus={swap.matcherHtlcStatus}
         />
       ) : (
-        <SwapStepper phase={phase} isSameChain={isSameChain} />
+        <SwapStepper phase={phase} isSameChain={true} />
       )}
 
       {/* HTLC detection handled by backend indexer — phase updates automatically */}

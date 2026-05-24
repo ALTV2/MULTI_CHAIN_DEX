@@ -28,7 +28,6 @@ module dex::cross_chain_order_book {
     const STATUS_MATCHED: u8 = 1;
     const STATUS_COMPLETED: u8 = 2;
     const STATUS_CANCELLED: u8 = 3;
-    const STATUS_EXPIRED: u8 = 4;
 
     // Minimum timelock for cross-chain swaps (1 hour)
     const MIN_TIMELOCK: u64 = 3600;
@@ -94,10 +93,6 @@ module dex::cross_chain_order_book {
     }
 
     public struct OrderCancelled has copy, drop {
-        order_id: u64,
-    }
-
-    public struct OrderExpired has copy, drop {
         order_id: u64,
     }
 
@@ -216,11 +211,10 @@ module dex::cross_chain_order_book {
         let order = table::borrow_mut(&mut book.orders, order_id);
         assert!(order.status == STATUS_ACTIVE, E_ORDER_NOT_ACTIVE);
 
-        // Check expiration
+        // Expiry is enforced off-chain by the indexer (comparing expires_at);
+        // matching an expired order is simply rejected here.
         let current_time = clock::timestamp_ms(clock) / 1000;
         if (current_time >= order.expires_at) {
-            order.status = STATUS_EXPIRED;
-            event::emit(OrderExpired { order_id });
             abort E_ORDER_NOT_ACTIVE
         };
 
@@ -291,8 +285,6 @@ module dex::cross_chain_order_book {
         // Check not expired
         let current_time = clock::timestamp_ms(clock) / 1000;
         if (current_time >= order.expires_at) {
-            order.status = STATUS_EXPIRED;
-            event::emit(OrderExpired { order_id });
             abort E_INVALID_EXPIRY
         };
 
@@ -306,6 +298,11 @@ module dex::cross_chain_order_book {
     /// Get order details
     public fun get_order(book: &OrderBook, order_id: u64): Order {
         *table::borrow(&book.orders, order_id)
+    }
+
+    /// Get order status code (0=Active, 1=Matched, 2=Completed, 3=Cancelled)
+    public fun get_order_status(book: &OrderBook, order_id: u64): u8 {
+        table::borrow(&book.orders, order_id).status
     }
 
     /// Get all active orders for a target chain

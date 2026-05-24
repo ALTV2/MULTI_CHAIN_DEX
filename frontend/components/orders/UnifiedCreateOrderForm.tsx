@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
-import { useAccount, useChainId, useBalance, useReadContract, useSwitchChain } from 'wagmi';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { useAccount, useChainId, useBalance, useReadContract, useSwitchChain, usePublicClient } from 'wagmi';
 import { useCurrentAccount, useSuiClient } from '@mysten/dapp-kit';
-import { parseEther, formatEther, zeroAddress, parseUnits } from 'viem';
+import { parseEther, formatEther, zeroAddress, parseUnits, parseEventLogs } from 'viem';
 import { sepolia, polygonAmoy } from 'wagmi/chains';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -22,7 +22,9 @@ import { useCreateSuiSameChainOrder } from '@/hooks/useSuiSameChainOrders';
 import { TargetWalletSelector } from '@/components/swap/TargetWalletSelector';
 import { useTranslation } from '@/hooks/useTranslation';
 import { toast } from 'sonner';
-import { registerCrossChainAddress } from '@/lib/api/dexApi';
+import { useAttachOrderMetadata } from '@/hooks/useDexApi';
+import { useSettingsStore } from '@/stores/useSettingsStore';
+import { CROSS_CHAIN_ORDER_BOOK_ABI } from '@/lib/contracts/abis/CrossChainOrderBook';
 
 const ERC20_BALANCE_ABI = [
   {
@@ -44,6 +46,8 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
   const { switchChainAsync } = useSwitchChain();
   const suiAccount = useCurrentAccount();
   const { t } = useTranslation();
+  const notificationEmail = useSettingsStore((s) => s.notificationEmail);
+  const attachMetadata = useAttachOrderMetadata();
 
   // Chain and token selection
   const [sourceChainId, setSourceChainId] = useState<number | string>(chainId);
@@ -171,7 +175,8 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
   ];
 
   // Hooks for order creation (EVM)
-  const { createOrder: createCrossChainOrder, isPending: isCrossChainPending, isConfirming: isCrossChainConfirming, isSuccess: isCrossChainSuccess } = useCreateCrossChainOrder(typeof sourceChainId === 'number' ? sourceChainId : sepolia.id);
+  const { createOrder: createCrossChainOrder, hash: crossChainHash, isPending: isCrossChainPending, isConfirming: isCrossChainConfirming, isSuccess: isCrossChainSuccess } = useCreateCrossChainOrder(typeof sourceChainId === 'number' ? sourceChainId : sepolia.id);
+  const publicClient = usePublicClient({ chainId: typeof sourceChainId === 'number' ? sourceChainId : undefined });
   const { createOrder: createSameChainOrder, isCreating: isSameChainCreating, isSuccess: isSameChainSuccess } = useCreateOrder();
 
   // Hook for SUI cross-chain order creation (SUI → EVM)
@@ -216,10 +221,6 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
       toast.success('Cross-chain order created successfully!');
       setSellAmount('');
       setBuyAmount('');
-      // For EVM→SUI: register the full SUI address so matchers can use it
-      if (isEvmToSui && address && suiAccount?.address) {
-        registerCrossChainAddress(address, suiAccount.address).catch(() => {});
-      }
       if (onOrderCreated) {
         setTimeout(onOrderCreated, 100);
       }
@@ -228,7 +229,44 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
     return () => {
       if (toastId) toast.dismiss(toastId);
     };
-  }, [isCrossChainPending, isCrossChainConfirming, isCrossChainSuccess, onOrderCreated, isEvmToSui, address, suiAccount?.address]);
+  }, [isCrossChainPending, isCrossChainConfirming, isCrossChainSuccess, onOrderCreated]);
+
+  // Attach off-chain order metadata once the createOrder tx is mined.
+  // The full SUI target address (EVM→SUI) doesn't fit on-chain, and the opt-in
+  // notification email must never touch the chain — both are sent here, keyed by
+  // the on-chain order ID decoded from the OrderCreated event.
+  const attachedHashRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!crossChainHash || !isCrossChain || !publicClient) return;
+    if (attachedHashRef.current === crossChainHash) return;
+    // Only needed when the target address can't live on-chain (EVM→SUI) or email opted in.
+    if (!isEvmToSui && !notificationEmail) return;
+    attachedHashRef.current = crossChainHash;
+
+    (async () => {
+      try {
+        const receipt = await publicClient.waitForTransactionReceipt({ hash: crossChainHash });
+        const events = parseEventLogs({
+          abi: CROSS_CHAIN_ORDER_BOOK_ABI,
+          eventName: 'OrderCreated',
+          logs: receipt.logs,
+        });
+        const created = events[0];
+        if (!created) return;
+        const args = created.args as { orderId: bigint; sourceChainId: bigint };
+        await attachMetadata.mutateAsync({
+          chainId: args.sourceChainId.toString(),
+          onChainOrderId: args.orderId.toString(),
+          orderType: 'CROSS_CHAIN',
+          role: 'creator',
+          targetAddress: isEvmToSui ? suiAccount?.address : undefined,
+          email: notificationEmail || undefined,
+        });
+      } catch (err) {
+        console.warn('Failed to attach creator order metadata:', err);
+      }
+    })();
+  }, [crossChainHash, isCrossChain, isEvmToSui, notificationEmail, publicClient, suiAccount?.address, attachMetadata]);
 
   // Handle same-chain order success
   useEffect(() => {
@@ -315,18 +353,8 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
         // WORKAROUND: Normalize all cross-chain amounts to 9 decimals (SUI standard)
         // This allows storing up to ~18 billion tokens per order
 
-        const sellTokenInfo = getTokenByAddress(sourceChainId, sellToken);
-        const buyTokenInfo = getTokenByAddress(targetChainId, buyToken);
-
         // For cross-chain orders, always use 9 decimals to avoid u64 overflow
         const CROSS_CHAIN_DECIMALS = 9;
-
-        console.log('💰 Token info:', {
-          sell: { token: sellToken, symbol: sellTokenInfo?.symbol, nativeDecimals: sellTokenInfo?.decimals },
-          buy: { token: buyToken, symbol: buyTokenInfo?.symbol, nativeDecimals: buyTokenInfo?.decimals },
-          storedDecimals: CROSS_CHAIN_DECIMALS,
-          note: 'Using 9 decimals to avoid u64 overflow in Move contract'
-        });
 
         // Convert amounts to 9 decimals
         const parsedSellAmount = parseUnits(sellAmount, CROSS_CHAIN_DECIMALS);
@@ -369,14 +397,11 @@ export function UnifiedCreateOrderForm({ onOrderCreated }: UnifiedCreateOrderFor
       }
 
       if (sourceChainId !== chainId) {
-        console.log('🔄 switchChainAsync called with:', { sourceChainId, currentChainId: chainId, type: typeof sourceChainId });
         try {
           toast.info(`Switching to ${sourceChainConfig?.name}...`);
-          const result = await switchChainAsync({ chainId: sourceChainId });
-          console.log('✅ switchChainAsync resolved:', result);
+          await switchChainAsync({ chainId: sourceChainId });
           toast.success('Network switched!');
         } catch (err: any) {
-          console.error('❌ switchChainAsync rejected:', err);
           toast.error(`Failed to switch: ${err?.shortMessage || err?.message || 'unknown error'}`);
         }
         return;

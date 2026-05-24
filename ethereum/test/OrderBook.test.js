@@ -288,7 +288,7 @@ describe("OrderBook", function () {
         .to.emit(orderBook, "OrderCancelled");
 
       const order = await orderBook.getOrder(1);
-      expect(order.status).to.equal(3); // Cancelled
+      expect(order.status).to.equal(2); // Cancelled
       expect(order.sellAmount).to.equal(0);
 
       const balanceAfter = await testTokenA.balanceOf(trader1.address);
@@ -378,7 +378,7 @@ describe("OrderBook", function () {
           .to.emit(orderBook, "OrderExecuted");
 
         const order = await orderBook.getOrder(1);
-        expect(order.status).to.equal(2); // Completed
+        expect(order.status).to.equal(1); // Completed
       });
 
       it("Should revert if non-trade contract tries to deactivate", async function () {
@@ -396,7 +396,7 @@ describe("OrderBook", function () {
         expect(balanceAfter - balanceBefore).to.equal(ORDER_AMOUNT);
 
         const order = await orderBook.getOrder(1);
-        expect(order.status).to.equal(1); // Pending
+        expect(order.status).to.equal(0); // Active (status unchanged; deactivateOrder sets Completed atomically)
         expect(order.sellAmount).to.equal(0);
       });
 
@@ -422,10 +422,10 @@ describe("OrderBook", function () {
       it("Should revert if trying to move tokens twice", async function () {
         await orderBook.connect(tradeContract).moveTokensToTradeContract(1);
 
-        // After moving tokens, order status becomes Pending
+        // After moving tokens, sellAmount is zeroed (status stays Active)
         await expect(
           orderBook.connect(tradeContract).moveTokensToTradeContract(1)
-        ).to.be.revertedWithCustomError(orderBook, "OrderNotActive");
+        ).to.be.revertedWithCustomError(orderBook, "NoFundsToMove");
       });
     });
   });

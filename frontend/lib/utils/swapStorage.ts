@@ -1,6 +1,23 @@
 import type { StoredSwapMeta } from '@/types/swap';
+import { useSettingsStore } from '@/stores/useSettingsStore';
 
 const STORAGE_KEY_PREFIX = 'dex_swaps_';
+
+/**
+ * When `secretStorage === 'show_once'`, the creator's secret must NOT be
+ * persisted to localStorage — it is shown once at creation time, and the
+ * user is responsible for saving it. All other fields are still persisted
+ * because the UI needs them (orderId, hashlock, HTLC IDs, etc.).
+ */
+function stripSecretIfShowOnce(swap: StoredSwapMeta): StoredSwapMeta {
+  if (typeof window === 'undefined') return swap;
+  const mode = useSettingsStore.getState().secretStorage;
+  if (mode === 'show_once' && swap.secret) {
+    const { secret: _drop, ...rest } = swap;
+    return rest as StoredSwapMeta;
+  }
+  return swap;
+}
 
 function getStorageKey(walletAddress: string): string {
   return `${STORAGE_KEY_PREFIX}${walletAddress.toLowerCase()}`;
@@ -63,12 +80,13 @@ export function getSwap(walletAddress: string, orderId: string, sourceChainId?: 
 
 export function saveSwap(walletAddress: string, swap: StoredSwapMeta): void {
   if (typeof window === 'undefined') return;
+  const toStore = stripSecretIfShowOnce(swap);
   const swaps = getSwaps(walletAddress);
-  const idx = swaps.findIndex((s) => matchSwap(s, swap.orderId, swap.sourceChainId));
+  const idx = swaps.findIndex((s) => matchSwap(s, toStore.orderId, toStore.sourceChainId));
   if (idx >= 0) {
-    swaps[idx] = { ...swap, updatedAt: Date.now() };
+    swaps[idx] = { ...toStore, updatedAt: Date.now() };
   } else {
-    swaps.push({ ...swap, updatedAt: Date.now() });
+    swaps.push({ ...toStore, updatedAt: Date.now() });
   }
   localStorage.setItem(getStorageKey(walletAddress), JSON.stringify(swaps));
 }

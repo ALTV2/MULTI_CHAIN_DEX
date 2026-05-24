@@ -23,6 +23,8 @@ import { generateSecret, generateHashlock, generateSwapId, calculateTimelock } f
 import { formatAmount } from '@/lib/utils/formatAmount';
 import { toast } from 'sonner';
 import { ZERO_BYTES32 } from '@/lib/constants/swap';
+import { useAttachOrderMetadata } from '@/hooks/useDexApi';
+import { useSettingsStore } from '@/stores/useSettingsStore';
 
 interface MatchOrderModalProps {
   open: boolean;
@@ -36,6 +38,8 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
   const suiAccount = useCurrentAccount();
   const currentChainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
+  const notificationEmail = useSettingsStore((s) => s.notificationEmail);
+  const attachMetadata = useAttachOrderMetadata();
   const [targetWallet, setTargetWallet] = useState('');
   const [swapSecret, setSwapSecret] = useState<`0x${string}` | null>(null);
   const [pendingSwapData, setPendingSwapData] = useState<any>(null);
@@ -149,6 +153,16 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
         createdAt: Date.now(),
         updatedAt: Date.now(),
       });
+      // Attach off-chain matcher metadata: the matcher's full target-side address
+      // (their SUI address for EVM→SUI, which doesn't fit on-chain) + opt-in email.
+      attachMetadata.mutate({
+        chainId: String(sourceChainId),
+        onChainOrderId: orderId,
+        orderType: 'CROSS_CHAIN',
+        role: 'matcher',
+        targetAddress: isSuiTarget ? suiAccount?.address : address,
+        email: notificationEmail || undefined,
+      });
       toast.success('Order matched successfully!');
       onClose();
     }
@@ -205,6 +219,17 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
         updatedAt: Date.now(),
       });
 
+      // Attach off-chain matcher metadata: matcher's full SUI receiving address + opt-in email.
+      // The order lives on the SUI source chain, so it's keyed by the SUI chain ID.
+      attachMetadata.mutate({
+        chainId: String(sourceChainId),
+        onChainOrderId: order.id.toString(),
+        orderType: 'CROSS_CHAIN',
+        role: 'matcher',
+        targetAddress: matcherSuiAddress || undefined,
+        email: notificationEmail || undefined,
+      });
+
       // Clear pending data
       setPendingSwapData(null);
 
@@ -258,10 +283,138 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
     ? suiHTLCHook.error || crossChainHook.error // EVM → SUI errors
     : crossChainHook.error; // EVM → EVM errors
 
+  // ── Strategy: one async function per swap type ────────────────────────────
+
+  async function strategySuiSameChain() {
+    if (!order!.suiSameChainMeta) {
+      toast.error('Missing SUI order metadata');
+      return;
+    }
+    const pairConfig = getKnownPairs().find((p) => p.pairId === order!.suiSameChainMeta!.pairId);
+    if (!pairConfig) {
+      toast.error('Unknown SUI trading pair');
+      return;
+    }
+    await fillSuiSameChainHook.fillOrder({
+      orderId: Number(order!.id),
+      orderObjectId: order!.suiSameChainMeta.orderObjectId,
+      creator: order!.creator,
+      sellAmount: order!.sellAmount,
+      buyAmount: order!.buyAmount,
+      status: 'Active',
+      pairConfig,
+    });
+    toast.success('Order filled successfully!');
+    onClose();
+  }
+
+  async function strategyEvmSameChain() {
+    await sameChainHook.executeOrder({
+      orderId: order!.id,
+      tokenToBuy: order!.buyToken as `0x${string}`,
+      buyAmount: order!.buyAmount,
+    });
+  }
+
+  async function strategySuiToEvm(userAddress: string) {
+    // SUI → EVM: Matcher creates HTLC on EVM (target chain) locking EVM tokens
+    const secret = generateSecret();
+    const hashlock = generateHashlock(secret);
+    const timelock = calculateTimelock(true);
+    const swapId = generateSwapId(
+      userAddress,
+      order!.creator,
+      hashlock,
+      timelock,
+      targetChainId
+    );
+
+    setPendingSwapData({ secret, hashlock, swapId });
+
+    if (needsApproval && !isApproved) {
+      toast.info('Approving token for HTLC contract...');
+      await approve();
+      toast.success('Token approved!');
+    }
+
+    if (!isValidEvmAddress(creatorEvmAddress)) {
+      toast.error('Enter a valid EVM address for the order creator');
+      return;
+    }
+
+    // SUI orders store amounts in 9 decimals (u64 safety); scale to EVM token decimals.
+    const evmTokenInfo = getTokenByAddress(evmTargetChainId, order!.buyToken);
+    const evmDecimals = evmTokenInfo?.decimals ?? 18;
+    const CROSS_CHAIN_DECIMALS = 9;
+    const scaledAmount = order!.buyAmount * BigInt(10 ** (evmDecimals - CROSS_CHAIN_DECIMALS));
+
+    await evmHTLCHook.createSwap({
+      swapId,
+      participant: creatorEvmAddress as `0x${string}`,
+      hashlock,
+      timelock,
+      token: order!.buyToken as `0x${string}`,
+      amount: scaledAmount,
+    });
+
+    // Best-effort: also mark the SUI order as matched if SUI wallet is connected.
+    if (suiAccount) {
+      try {
+        await suiMatchHook.matchOrder(order!.id.toString(), swapId);
+      } catch (err) {
+        console.warn('Failed to mark order as matched on SUI:', err);
+        toast.warning('HTLC created, but could not update order status on SUI. Ask creator to verify HTLC manually.');
+      }
+    }
+  }
+
+  async function strategyEvmToSui(userAddress: string) {
+    // EVM → SUI: call matchOrder on EVM CCOB to register the match
+    const secret = generateSecret();
+    const hashlock = generateHashlock(secret);
+    const timelock = calculateTimelock(true);
+    const swapId = generateSwapId(
+      userAddress,
+      order!.creator,
+      hashlock,
+      timelock,
+      sourceChainId
+    );
+
+    await crossChainHook.matchOrder(order!.id, swapId);
+
+    toast.success('Order matched! Waiting for creator to lock tokens on EVM, then you lock SUI tokens.');
+
+    // Save swap data — include creatorSuiAddress so MatcherLockAction knows where to send SUI
+    if (address) {
+      saveSwap(address, {
+        orderId: order!.id.toString(),
+        role: 'matcher',
+        sourceChainId: sourceChainId,
+        targetChainId: targetChainId,
+        hashlock,
+        secret,
+        sellToken: order!.sellToken,
+        sellAmount: order!.sellAmount.toString(),
+        buyToken: order!.buyToken,
+        buyAmount: order!.buyAmount.toString(),
+        creator: order!.creator,
+        matcher: address,
+        creatorSuiAddress: order!.targetAddress,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    }
+  }
+
+  async function strategyEvmCrossChain() {
+    await crossChainHook.matchOrder(order!.id, ZERO_BYTES32 as `0x${string}`);
+  }
+
   async function handleAction() {
     if (!order) return;
 
-    // Check wallet connection based on chain type (matcher is always on target side!)
+    // Matcher is always on the target side — check the right wallet.
     const userAddress = isSuiTarget ? suiAccount?.address : address;
     if (!userAddress) {
       toast.error(`Please connect your ${isSuiTarget ? 'SUI' : 'EVM'} wallet`);
@@ -273,145 +426,23 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
         toast.info(`Switching to ${getChainConfig(requiredChainForMatch)?.shortName}...`);
         await switchChainAsync({ chainId: requiredChainForMatch });
       } catch (err: any) {
-        console.error('Switch chain failed:', err);
         toast.error(`Failed to switch network: ${err?.shortMessage || err?.message || 'unknown error'}`);
       }
       return;
     }
 
     try {
+      // Dispatch to the right strategy based on swap type.
       if (isSuiSameChain) {
-        // SUI same-chain: direct fill via order_book.move
-        if (!order.suiSameChainMeta) {
-          toast.error('Missing SUI order metadata');
-          return;
-        }
-        const pairConfig = getKnownPairs().find(
-          (p) => p.pairId === order.suiSameChainMeta!.pairId
-        );
-        if (!pairConfig) {
-          toast.error('Unknown SUI trading pair');
-          return;
-        }
-        await fillSuiSameChainHook.fillOrder({
-          orderId: Number(order.id),
-          orderObjectId: order.suiSameChainMeta.orderObjectId,
-          creator: order.creator,
-          sellAmount: order.sellAmount,
-          buyAmount: order.buyAmount,
-          status: 'Active',
-          pairConfig,
-        });
-        toast.success('Order filled successfully!');
-        onClose();
+        await strategySuiSameChain();
       } else if (isSameChain) {
-        // Execute same-chain order
-        await sameChainHook.executeOrder({
-          orderId: order.id,
-          tokenToBuy: order.buyToken as `0x${string}`,
-          buyAmount: order.buyAmount,
-        });
-      } else if (isSuiSwap) {
-        // Cross-chain swap involving SUI - create HTLC
-        const secret = generateSecret();
-        const hashlock = generateHashlock(secret);
-        const timelock = calculateTimelock(true); // First swap gets longer timelock
-
-        if (isSuiSource) {
-          // SUI → EVM: Matcher creates HTLC on EVM (target chain) locking EVM tokens
-          const swapId = generateSwapId(
-            userAddress,
-            order.creator,
-            hashlock,
-            timelock,
-            targetChainId // Use target chain (EVM) for swapId generation
-          );
-
-          // Store data to be processed after transaction confirms
-          setPendingSwapData({
-            secret,
-            hashlock,
-            swapId,
-          });
-
-          // Approve ERC20 token for HTLC contract if needed
-          if (needsApproval && !isApproved) {
-            toast.info('Approving token for HTLC contract...');
-            await approve();
-            toast.success('Token approved!');
-          }
-
-          // Create HTLC directly on EVM (not via order book) using evmHTLCHook
-          if (!isValidEvmAddress(creatorEvmAddress)) {
-            toast.error('Enter a valid EVM address for the order creator');
-            return;
-          }
-          // SUI orders store amounts in 9 decimals (u64 safety).
-          // EVM tokens typically use 18 decimals. Scale up for the HTLC.
-          const evmTokenInfo = getTokenByAddress(evmTargetChainId, order.buyToken);
-          const evmDecimals = evmTokenInfo?.decimals ?? 18;
-          const CROSS_CHAIN_DECIMALS = 9;
-          const scaledAmount = order.buyAmount * BigInt(10 ** (evmDecimals - CROSS_CHAIN_DECIMALS));
-
-          await evmHTLCHook.createSwap({
-            swapId,
-            participant: creatorEvmAddress as `0x${string}`,
-            hashlock,
-            timelock,
-            token: order.buyToken as `0x${string}`,
-            amount: scaledAmount,
-          });
-
-          // Success handling moved to useEffect above (only after transaction confirms)
-
-          // If SUI wallet connected, also call matchOrder on SUI side
-          if (suiAccount) {
-            try {
-              await suiMatchHook.matchOrder(order.id.toString(), swapId);
-            } catch (err) {
-              console.warn('Failed to mark order as matched on SUI:', err);
-              toast.warning('HTLC created, but could not update order status on SUI. Ask creator to verify HTLC manually.');
-            }
-          }
-        } else if (isSuiTarget) {
-          // EVM → SUI: call matchOrder on EVM CCOB to register the match
-          const swapId = generateSwapId(
-            userAddress,
-            order.creator,
-            hashlock,
-            timelock,
-            sourceChainId
-          );
-
-          await crossChainHook.matchOrder(order.id, swapId);
-
-          toast.success('Order matched! Waiting for creator to lock tokens on EVM, then you lock SUI tokens.');
-
-          // Save swap data — include creatorSuiAddress so MatcherLockAction knows where to send SUI
-          if (address) {
-            saveSwap(address, {
-              orderId: order.id.toString(),
-              role: 'matcher',
-              sourceChainId: sourceChainId,
-              targetChainId: targetChainId,
-              hashlock,
-              secret,
-              sellToken: order.sellToken,
-              sellAmount: order.sellAmount.toString(),
-              buyToken: order.buyToken,
-              buyAmount: order.buyAmount.toString(),
-              creator: order.creator,
-              matcher: address,
-              // order.targetAddress is the creator's SUI address where they want to receive tokens
-              creatorSuiAddress: order.targetAddress,
-              createdAt: Date.now(),
-              updatedAt: Date.now(),
-            });
-          }
-        }
+        await strategyEvmSameChain();
+      } else if (isSuiSource) {
+        await strategySuiToEvm(userAddress);
+      } else if (isSuiTarget) {
+        await strategyEvmToSui(userAddress);
       } else {
-        // EVM → EVM: Standard cross-chain match
-        await crossChainHook.matchOrder(order.id, ZERO_BYTES32 as `0x${string}`);
+        await strategyEvmCrossChain();
       }
     } catch (error: any) {
       console.error('Error matching order:', error);

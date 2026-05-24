@@ -3,12 +3,8 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useAccount } from 'wagmi';
 import { ThemeToggle } from '@/components/common/ThemeToggle';
-import { LoginButton } from '@/components/auth/LoginButton';
-import { UserMenu } from '@/components/auth/UserMenu';
 import { UnifiedWalletButton } from '@/components/wallet/UnifiedWalletButton';
-import { useCurrentUser } from '@/hooks/useAuth';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useLocaleStore } from '@/stores/useLocaleStore';
 import { cn } from '@/lib/utils/cn';
@@ -51,8 +47,6 @@ const navItems: NavItem[] = [
 
 export function Header() {
   const pathname = usePathname();
-  const { isConnected } = useAccount();
-  const { isAuthenticated } = useCurrentUser();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { t } = useTranslation();
   const { locale, setLocale } = useLocaleStore();
@@ -117,8 +111,6 @@ export function Header() {
               {locale === 'en' ? 'RU' : 'EN'}
             </button>
             <ThemeToggle />
-            {isConnected && !isAuthenticated && <LoginButton />}
-            {isAuthenticated && <UserMenu />}
 
             {/* Unified Wallet Button */}
             <UnifiedWalletButton />

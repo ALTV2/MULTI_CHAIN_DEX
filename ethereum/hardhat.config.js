@@ -25,11 +25,17 @@ module.exports = {
       url: process.env.SEPOLIA_RPC_URL || "",
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
       chainId: 11155111
+    },
+    polygonAmoy: {
+      url: process.env.POLYGON_RPC_URL || "",
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      chainId: 80002
     }
   },
   etherscan: {
     apiKey: {
-      sepolia: process.env.ETHERSCAN_API_KEY || ""
+      sepolia: process.env.ETHERSCAN_API_KEY || "",
+      polygonAmoy: process.env.POLYGONSCAN_API_KEY || ""
     }
   },
   gasReporter: {

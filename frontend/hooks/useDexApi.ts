@@ -6,6 +6,7 @@ import { useCurrentAccount } from '@mysten/dapp-kit';
 import {
   fetchChains, fetchTokens, fetchOrders, fetchMyOrders,
   fetchActiveSwaps, fetchSwapHistory, notifyTransaction,
+  attachOrderMetadata,
   type ChainDto, type TokenDto, type OrderDto, type SwapDto, type PageDto,
 } from '@/lib/api/dexApi';
 
@@ -130,4 +131,25 @@ export function useRefreshDexData() {
   return () => {
     queryClient.invalidateQueries({ queryKey: ['dex'] });
   };
+}
+
+// ── Order metadata (off-chain) ────────────────────────────────────────
+
+/**
+ * Hook for attaching off-chain order metadata (full target address + opt-in email).
+ * On success, invalidates order/swap caches so the UI picks up the new fields.
+ */
+export function useAttachOrderMetadata() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: attachOrderMetadata,
+    onSuccess: (ok) => {
+      if (!ok) return;
+      queryClient.invalidateQueries({ queryKey: ['dex', 'orders'] });
+      queryClient.invalidateQueries({ queryKey: ['dex', 'myOrders'] });
+      queryClient.invalidateQueries({ queryKey: ['dex', 'activeSwaps'] });
+      queryClient.invalidateQueries({ queryKey: ['dex', 'swapHistory'] });
+    },
+  });
 }

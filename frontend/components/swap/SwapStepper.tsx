@@ -5,17 +5,17 @@ import type { SwapPhase } from '@/types/swap';
 import { getPhaseStepIndex } from '@/lib/utils/swapPhase';
 
 const STEPS = [
-  { label: 'Open' },
+  { label: 'Created' },
   { label: 'Matched' },
   { label: 'Lock 1' },
   { label: 'Lock 2' },
-  { label: 'Claiming' },
+  { label: 'Claim' },
   { label: 'Done' },
 ];
 
 const SAME_CHAIN_STEPS = [
-  { label: 'Open' },
-  { label: 'Completed' },
+  { label: 'Created' },
+  { label: 'Done' },
 ];
 
 export function SwapStepper({ phase, isSameChain = false }: { phase: SwapPhase; isSameChain?: boolean }) {

@@ -1,0 +1,29 @@
+# Routes the host dex.localhost:
+#   /api/*  → indexer  (REST API is served under /api/v2/...; no rewrite)
+#   /*      → frontend
+# Add to /etc/hosts:  127.0.0.1  dex.localhost
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dex-ingress
+  namespace: multichain-dex
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: dex.localhost
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: indexer
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000

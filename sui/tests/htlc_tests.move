@@ -72,6 +72,37 @@ module dex::htlc_tests {
     }
 
     #[test]
+    /// Exercise the remaining read-only accessors on an active swap.
+    fun test_view_functions() {
+        let mut scenario = ts::begin(ALICE);
+        let secret = create_32_bytes(42);
+        let hashlock = htlc::generate_hashlock(secret);
+        let swap_id = create_32_bytes(7);
+
+        let mut clock = clock::create_for_testing(ts::ctx(&mut scenario));
+        clock::set_for_testing(&mut clock, 1000000);
+
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let payment = coin::mint_for_testing<SUI>(500, ts::ctx(&mut scenario));
+            htlc::create_swap<SUI>(swap_id, BOB, hashlock, 2000, payment, &clock, ts::ctx(&mut scenario));
+        };
+
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let swap = ts::take_shared<Swap<SUI>>(&scenario);
+            assert!(htlc::is_swap_active(&swap), 0);
+            assert!(htlc::get_status(&swap) == 1, 1); // STATUS_ACTIVE
+            assert!(htlc::get_swap_id(&swap) == swap_id, 2);
+            assert!(htlc::get_hashlock(&swap) == hashlock, 3);
+            ts::return_shared(swap);
+        };
+
+        clock::destroy_for_testing(clock);
+        ts::end(scenario);
+    }
+
+    #[test]
     /// Test withdrawing with correct secret
     fun test_withdraw_with_secret() {
         let mut scenario = ts::begin(ALICE);
@@ -324,6 +355,89 @@ module dex::htlc_tests {
             ts::return_shared(swap);
         };
 
+        clock::destroy_for_testing(clock);
+        ts::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = dex::htlc::E_AMOUNT_ZERO)]
+    /// Creating a swap with a zero-value coin aborts.
+    fun test_create_zero_amount_fails() {
+        let mut scenario = ts::begin(ALICE);
+        let hashlock = htlc::generate_hashlock(create_32_bytes(42));
+        let mut clock = clock::create_for_testing(ts::ctx(&mut scenario));
+        clock::set_for_testing(&mut clock, 1000000);
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let payment = coin::mint_for_testing<SUI>(0, ts::ctx(&mut scenario));
+            htlc::create_swap<SUI>(create_32_bytes(1), BOB, hashlock, 2000, payment, &clock, ts::ctx(&mut scenario));
+        };
+        clock::destroy_for_testing(clock);
+        ts::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = dex::htlc::E_TIMELOCK_INVALID)]
+    /// Creating a swap with a timelock in the past aborts.
+    fun test_create_invalid_timelock_fails() {
+        let mut scenario = ts::begin(ALICE);
+        let hashlock = htlc::generate_hashlock(create_32_bytes(42));
+        let mut clock = clock::create_for_testing(ts::ctx(&mut scenario));
+        clock::set_for_testing(&mut clock, 1000000); // 1000 s
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let payment = coin::mint_for_testing<SUI>(1000, ts::ctx(&mut scenario));
+            htlc::create_swap<SUI>(create_32_bytes(1), BOB, hashlock, 500, payment, &clock, ts::ctx(&mut scenario));
+        };
+        clock::destroy_for_testing(clock);
+        ts::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = dex::htlc::E_NOT_PARTICIPANT)]
+    /// Only the designated participant may withdraw.
+    fun test_withdraw_not_participant_fails() {
+        let mut scenario = ts::begin(ALICE);
+        let secret = create_32_bytes(42);
+        let hashlock = htlc::generate_hashlock(secret);
+        let mut clock = clock::create_for_testing(ts::ctx(&mut scenario));
+        clock::set_for_testing(&mut clock, 1000000);
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let payment = coin::mint_for_testing<SUI>(1000, ts::ctx(&mut scenario));
+            htlc::create_swap<SUI>(create_32_bytes(1), BOB, hashlock, 2000, payment, &clock, ts::ctx(&mut scenario));
+        };
+        // ALICE (not the participant BOB) tries to withdraw
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let mut swap = ts::take_shared<Swap<SUI>>(&scenario);
+            htlc::withdraw<SUI>(&mut swap, secret, &clock, ts::ctx(&mut scenario));
+            ts::return_shared(swap);
+        };
+        clock::destroy_for_testing(clock);
+        ts::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = dex::htlc::E_NOT_INITIATOR)]
+    /// Only the initiator may refund.
+    fun test_refund_not_initiator_fails() {
+        let mut scenario = ts::begin(ALICE);
+        let hashlock = htlc::generate_hashlock(create_32_bytes(42));
+        let mut clock = clock::create_for_testing(ts::ctx(&mut scenario));
+        clock::set_for_testing(&mut clock, 1000000);
+        ts::next_tx(&mut scenario, ALICE);
+        {
+            let payment = coin::mint_for_testing<SUI>(1000, ts::ctx(&mut scenario));
+            htlc::create_swap<SUI>(create_32_bytes(1), BOB, hashlock, 2000, payment, &clock, ts::ctx(&mut scenario));
+        };
+        // BOB (not the initiator ALICE) tries to refund
+        ts::next_tx(&mut scenario, BOB);
+        {
+            let mut swap = ts::take_shared<Swap<SUI>>(&scenario);
+            htlc::refund<SUI>(&mut swap, &clock, ts::ctx(&mut scenario));
+            ts::return_shared(swap);
+        };
         clock::destroy_for_testing(clock);
         ts::end(scenario);
     }

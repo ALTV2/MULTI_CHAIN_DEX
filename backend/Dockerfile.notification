@@ -1,0 +1,27 @@
+# Multi-module build — context must be ./backend (the Maven reactor root), because
+# each service inherits from ../pom.xml. Builds only the notification module + its deps.
+FROM maven:3.9-eclipse-temurin-21-alpine AS build
+WORKDIR /build
+
+# Poms first so dependency resolution layers cache independently of source changes.
+COPY pom.xml ./
+COPY indexer-service/pom.xml indexer-service/pom.xml
+COPY notification-service/pom.xml notification-service/pom.xml
+
+COPY notification-service/src notification-service/src
+RUN mvn -q -pl notification-service -am package -DskipTests
+
+# ── Runtime ──
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+
+RUN addgroup -S dex && adduser -S dex -G dex
+USER dex
+
+COPY --from=build /build/notification-service/target/*.jar app.jar
+
+# Headless Kafka consumer — no HTTP port. Liveness is the JVM process itself.
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD pgrep -f app.jar > /dev/null || exit 1
+
+ENTRYPOINT ["java", "-jar", "app.jar"]

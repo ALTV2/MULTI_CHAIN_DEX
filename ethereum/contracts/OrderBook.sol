@@ -44,7 +44,6 @@ contract OrderBook is ReentrancyGuard, Ownable {
 
     enum OrderStatus {
         Active,    // Active (after creation)
-        Pending,   // Pending completion
         Completed, // Successfully executed
         Cancelled  // Cancelled
     }
@@ -219,7 +218,7 @@ contract OrderBook is ReentrancyGuard, Ownable {
     function deactivateOrder(uint256 _orderId) external onlyTradeContract {
         Order storage order = orders[_orderId];
         if (_orderId == 0 || _orderId > orderCounter) revert OrderDoesNotExist();
-        if (order.status != OrderStatus.Active && order.status != OrderStatus.Pending) revert OrderNotActive();
+        if (order.status != OrderStatus.Active) revert OrderNotActive();
         order.status = OrderStatus.Completed;
         emit OrderExecuted(_orderId, block.timestamp);
     }
@@ -250,9 +249,10 @@ contract OrderBook is ReentrancyGuard, Ownable {
         address tokenToSell = order.tokenToSell; // Cache for gas savings
         address tradeAddr = tradeContract; // Cache for gas savings
 
-        // Effects: modify state before external calls
+        // Effects: modify state before external calls.
+        // Status stays Active here; Trade.executeOrder atomically calls deactivateOrder
+        // (Active -> Completed) right after, so no intermediate observable state is needed.
         order.sellAmount = 0;
-        order.status = OrderStatus.Pending;
 
         // Interactions: external calls at the end
         if (tokenToSell == address(0)) {

@@ -1,0 +1,39 @@
+# Headless Kafka consumer — no Service (it exposes no HTTP port).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification
+  namespace: multichain-dex
+  labels:
+    app: notification
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notification
+  template:
+    metadata:
+      labels:
+        app: notification
+    spec:
+      containers:
+        - name: notification
+          # Build locally and load into Kind (see README); not pulled from a registry.
+          image: dex-notification:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: dex-config
+            - secretRef:
+                name: dex-secret
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pgrep -f app.jar > /dev/null"]
+            initialDelaySeconds: 40
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "256Mi"
+            limits:
+              memory: "512Mi"

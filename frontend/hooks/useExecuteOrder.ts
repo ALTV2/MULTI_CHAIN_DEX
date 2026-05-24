@@ -53,8 +53,6 @@ export function useExecuteOrder() {
 
       // If tokenToBuy is NOT a native token (ETH), need to approve ERC20
       if (!isNativeToken(chainId, tokenToBuy) && address) {
-        console.log('Checking allowance for token:', tokenToBuy);
-
         if (!publicClient) throw new Error('Wallet not connected');
 
         // Check current allowance
@@ -65,11 +63,8 @@ export function useExecuteOrder() {
           args: [address, tradeAddress],
         }) as bigint;
 
-        console.log('Current allowance:', allowance.toString(), 'Required:', buyAmount.toString());
-
         // If allowance is insufficient, approve
         if (allowance < buyAmount) {
-          console.log('Approving token...');
           const approveHash = await writeContractAsync({
             address: tokenToBuy,
             abi: erc20Abi,
@@ -78,8 +73,6 @@ export function useExecuteOrder() {
             gas: 100000n,
             ...gasParams,
           });
-
-          console.log('Approve tx:', approveHash);
 
           // Wait for approve transaction to complete
           const approveReceipt = await publicClient.waitForTransactionReceipt({
@@ -113,8 +106,6 @@ export function useExecuteOrder() {
       queryClient.invalidateQueries({ queryKey: ['myeCrossChainOrders'] });
       queryClient.invalidateQueries({ queryKey: ['userOrders'] });
       queryClient.invalidateQueries({ queryKey: ['tokenBalance'] });
-
-      console.log('✅ Order executed successfully - invalidating all caches');
     },
   });
 

@@ -64,6 +64,7 @@ contract HTLC is ReentrancyGuard {
 
     // Custom errors for gas efficiency
     error SwapAlreadyExists();
+    error InvalidSwapId();
     error SwapNotActive();
     error InvalidHashlock();
     error TimelockNotExpired();
@@ -94,6 +95,10 @@ contract HTLC is ReentrancyGuard {
         if (_participant == address(0)) revert InvalidParticipant();
         if (_timelock <= block.timestamp) revert InvalidTimelock();
         if (_hashlock == bytes32(0)) revert InvalidHashlock();
+        // V-4: bind the swapId to its parameters so a caller cannot supply an arbitrary id
+        // (decoy / collision hardening). Must match the off-chain derivation in
+        // frontend/lib/utils/crossChainCrypto.ts (generateSwapId). Checked before any token pull.
+        if (_swapId != _deriveSwapId(msg.sender, _participant, _hashlock, _timelock)) revert InvalidSwapId();
 
         uint256 finalAmount;
 
@@ -105,8 +110,12 @@ contract HTLC is ReentrancyGuard {
             // ERC20 token
             if (_amount == 0) revert InvalidAmount();
             if (msg.value > 0) revert InvalidAmount();
-            finalAmount = _amount;
+            // V-3: record the ACTUALLY-received amount, not the requested one, so fee-on-transfer
+            // / rebasing tokens cannot under-fund the shared pool and drain other swaps.
+            uint256 balanceBefore = IERC20(_token).balanceOf(address(this));
             IERC20(_token).safeTransferFrom(msg.sender, address(this), _amount);
+            finalAmount = IERC20(_token).balanceOf(address(this)) - balanceBefore;
+            if (finalAmount == 0) revert InvalidAmount();
         }
 
         swaps[_swapId] = Swap({
@@ -215,7 +224,21 @@ contract HTLC is ReentrancyGuard {
         bytes32 _hashlock,
         uint256 _timelock
     ) external view returns (bytes32) {
-        return keccak256(abi.encodePacked(
+        return _deriveSwapId(_initiator, _participant, _hashlock, _timelock);
+    }
+
+    /**
+     * @dev Canonical swapId derivation, shared by generateSwapId() and the V-4 binding check in
+     * createSwap(). Uses abi.encode (32-byte padded fields) so it matches the off-chain frontend
+     * derivation byte-for-byte.
+     */
+    function _deriveSwapId(
+        address _initiator,
+        address _participant,
+        bytes32 _hashlock,
+        uint256 _timelock
+    ) internal view returns (bytes32) {
+        return keccak256(abi.encode(
             _initiator,
             _participant,
             _hashlock,

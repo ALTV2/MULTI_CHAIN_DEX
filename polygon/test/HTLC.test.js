@@ -12,6 +12,17 @@ describe("HTLC", function () {
   const SECRET = ethers.encodeBytes32String("mysecret123");
   let HASHLOCK;
 
+  // V-4: createSwap binds swapId to keccak256(abi.encode(initiator, participant, hashlock,
+  // timelock, chainId)) — matches the off-chain frontend derivation.
+  const coder = ethers.AbiCoder.defaultAbiCoder();
+  async function deriveSwapId(initiator, participant, hashlock, timelock) {
+    const { chainId } = await ethers.provider.getNetwork();
+    return ethers.keccak256(coder.encode(
+      ["address", "address", "bytes32", "uint256", "uint256"],
+      [initiator, participant, hashlock, timelock, chainId]
+    ));
+  }
+
   beforeEach(async function () {
     [owner, alice, bob] = await ethers.getSigners();
 
@@ -34,8 +45,8 @@ describe("HTLC", function () {
 
   describe("createSwap", function () {
     it("should create a native token swap", async function () {
-      const swapId = ethers.encodeBytes32String("swap1");
       const timelock = (await time.latest()) + 3600; // 1 hour from now
+      const swapId = await deriveSwapId(alice.address, bob.address, HASHLOCK, timelock);
       const amount = ethers.parseEther("1");
 
       await expect(
@@ -61,8 +72,8 @@ describe("HTLC", function () {
     });
 
     it("should create an ERC20 token swap", async function () {
-      const swapId = ethers.encodeBytes32String("swap2");
       const timelock = (await time.latest()) + 3600;
+      const swapId = await deriveSwapId(alice.address, bob.address, HASHLOCK, timelock);
       const amount = ethers.parseEther("100");
 
       // Approve tokens
@@ -85,8 +96,8 @@ describe("HTLC", function () {
     });
 
     it("should revert if swap already exists", async function () {
-      const swapId = ethers.encodeBytes32String("swap3");
       const timelock = (await time.latest()) + 3600;
+      const swapId = await deriveSwapId(alice.address, bob.address, HASHLOCK, timelock);
 
       await htlc.connect(alice).createSwap(
         swapId,
@@ -110,6 +121,23 @@ describe("HTLC", function () {
         )
       ).to.be.revertedWithCustomError(htlc, "SwapAlreadyExists");
     });
+
+    it("V-4: reverts when the swapId is not bound to its parameters", async function () {
+      const timelock = (await time.latest()) + 3600;
+      const bogusSwapId = ethers.encodeBytes32String("attacker-chosen");
+
+      await expect(
+        htlc.connect(alice).createSwap(
+          bogusSwapId,
+          bob.address,
+          HASHLOCK,
+          timelock,
+          ethers.ZeroAddress,
+          0,
+          { value: ethers.parseEther("1") }
+        )
+      ).to.be.revertedWithCustomError(htlc, "InvalidSwapId");
+    });
   });
 
   describe("withdraw", function () {
@@ -118,8 +146,8 @@ describe("HTLC", function () {
     const amount = ethers.parseEther("1");
 
     beforeEach(async function () {
-      swapId = ethers.encodeBytes32String("swap4");
       timelock = (await time.latest()) + 3600;
+      swapId = await deriveSwapId(alice.address, bob.address, HASHLOCK, timelock);
 
       await htlc.connect(alice).createSwap(
         swapId,
@@ -167,8 +195,8 @@ describe("HTLC", function () {
     const amount = ethers.parseEther("1");
 
     beforeEach(async function () {
-      swapId = ethers.encodeBytes32String("swap5");
       timelock = (await time.latest()) + 3600;
+      swapId = await deriveSwapId(alice.address, bob.address, HASHLOCK, timelock);
 
       await htlc.connect(alice).createSwap(
         swapId,
@@ -209,9 +237,15 @@ describe("HTLC", function () {
       expect(hashlock).to.equal(HASHLOCK);
     });
 
-    it("should track swaps by user", async function () {
-      const swapId = ethers.encodeBytes32String("swap6");
+    it("generateSwapId matches the off-chain abi.encode keccak256 formula", async function () {
       const timelock = (await time.latest()) + 3600;
+      const onChain = await htlc.generateSwapId(alice.address, bob.address, HASHLOCK, timelock);
+      expect(onChain).to.equal(await deriveSwapId(alice.address, bob.address, HASHLOCK, timelock));
+    });
+
+    it("should track swaps by user", async function () {
+      const timelock = (await time.latest()) + 3600;
+      const swapId = await deriveSwapId(alice.address, bob.address, HASHLOCK, timelock);
 
       await htlc.connect(alice).createSwap(
         swapId,

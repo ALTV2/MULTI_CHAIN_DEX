@@ -10,7 +10,19 @@ module.exports = {
         enabled: true,
         runs: 200
       },
-      viaIR: true
+      viaIR: true,
+      // SMTChecker (BMC engine, 10s timeout). Включается флагом SMT_CHECK=1.
+      // См. §4.2.1 ВКР.
+      ...(process.env.SMT_CHECK === "1" && {
+        modelChecker: {
+          engine: "bmc",
+          timeout: 10000,
+          showProvedSafe: false,
+          showUnproved: false,
+          showUnsupported: false,
+          targets: ["assert", "underflow", "overflow", "divByZero", "outOfBounds"]
+        }
+      })
     }
   },
   networks: {

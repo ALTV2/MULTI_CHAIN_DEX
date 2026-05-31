@@ -16,6 +16,7 @@ import {
 import { Transaction } from '@mysten/sui/transactions';
 import { getContractAddress } from '@/lib/contracts/addresses';
 import { hexToBytes } from '@/lib/utils/crossChainCrypto';
+import { assertSuiClaimableByMe, normalizeSuiHashlock } from '@/lib/utils/suiSwapVerify';
 
 const PACKAGE_ID = getContractAddress('sui:testnet', 'htlc');
 const CLOCK_OBJECT_ID = '0x6'; // SUI Clock object
@@ -158,6 +159,7 @@ export function useCreateSuiHTLC() {
 export function useWithdrawSuiHTLC() {
   const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction();
   const account = useCurrentAccount();
+  const client = useSuiClient();
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
@@ -166,6 +168,10 @@ export function useWithdrawSuiHTLC() {
       swapObjectId: string;
       secret: `0x${string}`;
       tokenType: string;
+      // V-2: when provided, the on-chain SUI Swap object is verified BEFORE the secret is
+      // submitted, so the creator/matcher never reveals it against a same-hashlock decoy that
+      // pays them dust. Mirrors assertClaimableByMe on the EVM legs.
+      verify?: { expectedHashlock: string; minAmount?: bigint };
     }) => {
       if (!account) {
         throw new Error('Wallet not connected');
@@ -175,6 +181,31 @@ export function useWithdrawSuiHTLC() {
       setError(null);
 
       try {
+        // V-2: fail-closed verification of the target Swap object before revealing the secret.
+        if (params.verify) {
+          const obj = await client.getObject({
+            id: params.swapObjectId,
+            options: { showContent: true },
+          });
+          if (!obj.data?.content || !('fields' in obj.data.content)) {
+            throw new Error('SUI HTLC object not found — refusing to reveal secret');
+          }
+          const f = obj.data.content.fields as any;
+          assertSuiClaimableByMe(
+            {
+              status: parseInt(f.status ?? '0', 10),
+              participant: f.participant,
+              hashlock: normalizeSuiHashlock(f.hashlock),
+              amount: BigInt(f.balance ?? '0'),
+            },
+            {
+              mySuiAddress: account.address,
+              expectedHashlock: params.verify.expectedHashlock,
+              minAmount: params.verify.minAmount,
+            }
+          );
+        }
+
         const tx = new Transaction();
 
         // Convert secret to Uint8Array
@@ -204,7 +235,7 @@ export function useWithdrawSuiHTLC() {
         throw error;
       }
     },
-    [account, signAndExecute]
+    [account, signAndExecute, client]
   );
 
   return {

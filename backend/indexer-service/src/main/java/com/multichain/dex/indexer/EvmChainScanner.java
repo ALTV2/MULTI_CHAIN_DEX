@@ -106,16 +106,22 @@ public class EvmChainScanner implements ChainScanner {
             if (htlcAddr == null) return;
 
             BigInteger latestBlock = retryRpc(() -> web3j.ethBlockNumber().send().getBlockNumber());
-            long latest = latestBlock.longValue();
+            long tip = latestBlock.longValue();
+            int confirmations = confirmationsFor(chain.getId());
+            // IDX-REORG: a terminal transition (SwapWithdrawn/Refunded) freezes the order in a phase
+            // that is never recomputed, so it must be FINAL before we index it. We stay `confirmations`
+            // blocks behind head for those (Polygon PoS needs a deeper buffer than Ethereum).
+            long finalized = safeHead(tip, confirmations);
 
-            // Alchemy Free tier limits eth_getLogs to 10-block range.
-            // Scan multiple 10-block chunks per cycle to catch up quickly (max 100 chunks = 1000 blocks).
-            long cursor = chain.getLastIndexedBlock() + 1;
+            // Alchemy Free tier limits eth_getLogs to a 10-block range; scan 10-block chunks.
             int maxChunks = 100;
 
-            for (int chunk = 0; chunk < maxChunks && cursor <= latest; chunk++) {
+            // (1) Finalized pass — the ONLY place terminal events are indexed, so a reorg can never
+            //     make us freeze a since-orphaned withdraw/refund (or surface its secret early).
+            long cursor = chain.getLastIndexedBlock() + 1;
+            for (int chunk = 0; chunk < maxChunks && finalized >= 0 && cursor <= finalized; chunk++) {
                 long fromBlock = cursor;
-                long toBlock = Math.min(fromBlock + 9, latest);
+                long toBlock = Math.min(fromBlock + 9, finalized);
 
                 scanSwapCreatedEvents(chain, web3j, htlcAddr, fromBlock, toBlock);
                 scanSwapWithdrawnEvents(chain, web3j, htlcAddr, fromBlock, toBlock);
@@ -123,19 +129,40 @@ public class EvmChainScanner implements ChainScanner {
 
                 cursor = toBlock + 1;
             }
-
-            // Poll existing ACTIVE HTLCs for status changes (fallback)
-            List<HtlcSwap> activeHtlcs = htlcRepo.findByChainIdAndStatus(chain.getId(), HtlcStatus.ACTIVE);
-            for (HtlcSwap htlc : activeHtlcs) {
-                if (htlc.getOnChainSwapId() == null) continue;
-                try {
-                    updateHtlcStatus(web3j, htlcAddr, htlc);
-                } catch (Exception e) {
-                    log.warn("[EVM:{}] Failed to update HTLC {}", chain.getId(), htlc.getOnChainSwapId(), e);
-                }
+            if (finalized >= 0) {
+                chain.setLastIndexedBlock(Math.max(chain.getLastIndexedBlock(), cursor - 1));
             }
 
-            chain.setLastIndexedBlock(cursor - 1);
+            // (2) Near-tip pass — SwapCreated ONLY, over the still-unfinalized zone (finalized, tip].
+            //     HTLC *creation* must be visible immediately for fast cross-chain matching and for
+            //     the /tx/notify fast path; surfacing it early is safe because the client re-verifies
+            //     the HTLC on-chain (fail-closed) before locking/revealing. We do NOT advance the
+            //     cursor here, so these blocks are re-scanned each cycle until they finalize
+            //     (idempotent — scanSwapCreatedEvents skips already-stored swapIds). Terminal events
+            //     are deliberately NOT scanned here.
+            long nearFrom = Math.max(finalized + 1, chain.getLastIndexedBlock() + 1);
+            for (int chunk = 0; chunk < maxChunks && nearFrom <= tip; chunk++) {
+                long toBlock = Math.min(nearFrom + 9, tip);
+                scanSwapCreatedEvents(chain, web3j, htlcAddr, nearFrom, toBlock);
+                nearFrom = toBlock + 1;
+            }
+
+            // Poll existing ACTIVE HTLCs for status changes (fallback). Read at the FINALIZED block,
+            // not the tip — otherwise this path would mark an HTLC terminal from an unfinalized read
+            // and defeat the IDX-REORG buffer above. (Skip entirely until the chain has finality.)
+            if (finalized >= 0) {
+                DefaultBlockParameter finalityBlock =
+                        DefaultBlockParameter.valueOf(BigInteger.valueOf(finalized));
+                List<HtlcSwap> activeHtlcs = htlcRepo.findByChainIdAndStatus(chain.getId(), HtlcStatus.ACTIVE);
+                for (HtlcSwap htlc : activeHtlcs) {
+                    if (htlc.getOnChainSwapId() == null) continue;
+                    try {
+                        updateHtlcStatus(web3j, htlcAddr, htlc, finalityBlock);
+                    } catch (Exception e) {
+                        log.warn("[EVM:{}] Failed to update HTLC {}", chain.getId(), htlc.getOnChainSwapId(), e);
+                    }
+                }
+            }
         } catch (Exception e) {
             log.error("[EVM:{}] Failed to scan HTLCs", chain.getId(), e);
         }
@@ -329,14 +356,15 @@ public class EvmChainScanner implements ChainScanner {
                             .map(HtlcSwap::getOrder)
                             .orElse(null);
 
-                    // Fallback: find matched order by initiator/participant addresses
+                    // Fallback: find matched order by initiator/participant addresses.
+                    // Drive candidate selection through resolveHtlcRole (V-2) — never the old
+                    // inline default-to-MATCHER, which could mis-slot a stranger.
                     if (linkedOrder == null) {
                         var candidates = orderRepo.findMatchedByAddresses(initiator, participant);
-                        // Pick the first candidate that doesn't already have this role's HTLC
                         for (var candidate : candidates) {
-                            HtlcRole candidateRole = initiator.equalsIgnoreCase(candidate.getCreatorSourceAddress())
-                                    ? HtlcRole.CREATOR : HtlcRole.MATCHER;
-                            if (htlcRepo.findByOrderIdAndRole(candidate.getId(), candidateRole).isEmpty()) {
+                            HtlcRole candidateRole = resolveHtlcRole(candidate, initiator);
+                            if (candidateRole != null
+                                    && htlcRepo.findByOrderIdAndRole(candidate.getId(), candidateRole).isEmpty()) {
                                 linkedOrder = candidate;
                                 break;
                             }
@@ -345,9 +373,14 @@ public class EvmChainScanner implements ChainScanner {
 
                     if (linkedOrder == null) continue;
 
-                    // Determine role: initiator == order creator → CREATOR, else MATCHER
-                    HtlcRole role = initiator.equalsIgnoreCase(linkedOrder.getCreatorSourceAddress())
-                            ? HtlcRole.CREATOR : HtlcRole.MATCHER;
+                    // V-2: only link if the on-chain initiator is actually a party to this order.
+                    // Defends against decoy HTLCs that reuse the (public) hashlock to hijack a role.
+                    HtlcRole role = resolveHtlcRole(linkedOrder, initiator);
+                    if (role == null) {
+                        log.warn("[EVM:{}] HTLC {} matched order {} by hashlock but initiator {} is not a party — refusing to link (possible decoy)",
+                                chain.getId(), swapId, linkedOrder.getOnChainOrderId(), initiator);
+                        continue;
+                    }
 
                     // Don't create duplicate
                     if (htlcRepo.findByOrderIdAndRole(linkedOrder.getId(), role).isPresent()) continue;
@@ -385,6 +418,47 @@ public class EvmChainScanner implements ChainScanner {
         } catch (Exception e) {
             log.warn("[EVM:{}] Failed to scan SwapCreated events", chain.getId(), e);
         }
+    }
+
+    /**
+     * V-2: resolve an HTLC's role for a candidate order, returning null when the on-chain
+     * initiator is NOT a party to the order. The scanner refuses to link non-parties, so a
+     * decoy HTLC that reuses the public hashlock cannot occupy the creator/matcher slot.
+     */
+    static HtlcRole resolveHtlcRole(Order order, String initiator) {
+        if (order == null || initiator == null) return null;
+        // HTLC@A (source leg): the creator is the initiator.
+        if (initiator.equalsIgnoreCase(order.getCreatorSourceAddress())) return HtlcRole.CREATOR;
+        // HTLC@B (target leg): the matcher is the initiator. Its address ON THE TARGET chain is
+        // matcherTargetAddress — this is what we must match for SUI→EVM, where creator/matcher
+        // *source* addresses are SUI but the matcher's EVM HTLC carries an EVM initiator. For
+        // EVM→EVM the matcher reuses one wallet, so matcherSourceAddress also identifies it.
+        // We key the MATCHER role on the INITIATOR only (never the participant): an attacker can
+        // set any participant, so keying on participant would re-open the decoy/hashlock-collision
+        // hole V-2 closes. A stranger matches neither matcher address, so the guard still holds.
+        if (order.getMatcherTargetAddress() != null
+                && initiator.equalsIgnoreCase(order.getMatcherTargetAddress())) return HtlcRole.MATCHER;
+        if (order.getMatcherSourceAddress() != null
+                && initiator.equalsIgnoreCase(order.getMatcherSourceAddress())) return HtlcRole.MATCHER;
+        return null;
+    }
+
+    /**
+     * IDX-REORG: highest block safe to treat as final = latest - confirmations.
+     * Returns -1 when the chain has fewer than `confirmations` blocks (index nothing yet).
+     */
+    static long safeHead(long latest, int confirmations) {
+        long head = latest - confirmations;
+        return head < 0 ? -1 : head;
+    }
+
+    /**
+     * IDX-REORG: per-chain finality buffer. Polygon PoS exhibits deeper probabilistic reorgs
+     * than Ethereum, so it requires a larger confirmation depth.
+     */
+    static int confirmationsFor(String chainId) {
+        if ("80002".equals(chainId) || "137".equals(chainId)) return 128; // Polygon Amoy / PoS
+        return 12; // Ethereum Sepolia / mainnet-like
     }
 
     /**
@@ -482,7 +556,8 @@ public class EvmChainScanner implements ChainScanner {
 
     // ── HTLC status update (fallback polling) ─────────────────────────────
 
-    private void updateHtlcStatus(Web3j web3j, String htlcAddr, HtlcSwap htlc) throws Exception {
+    private void updateHtlcStatus(Web3j web3j, String htlcAddr, HtlcSwap htlc,
+                                  DefaultBlockParameter atBlock) throws Exception {
         String data = FunctionEncoder.encode(new Function(
                 "getSwap",
                 List.of(new Bytes32(hexToBytes32(htlc.getOnChainSwapId()))),
@@ -494,7 +569,7 @@ public class EvmChainScanner implements ChainScanner {
                 )
         ));
 
-        String result = retryRpc(() -> ethCall(web3j, htlcAddr, data));
+        String result = retryRpc(() -> ethCall(web3j, htlcAddr, data, atBlock));
         if (result == null || result.length() < 10) return;
 
         @SuppressWarnings("rawtypes")
@@ -696,8 +771,12 @@ public class EvmChainScanner implements ChainScanner {
     }
 
     private String ethCall(Web3j web3j, String to, String data) throws Exception {
+        return ethCall(web3j, to, data, DefaultBlockParameterName.LATEST);
+    }
+
+    private String ethCall(Web3j web3j, String to, String data, DefaultBlockParameter block) throws Exception {
         var tx = new org.web3j.protocol.core.methods.request.Transaction(null, null, null, null, to, null, data);
-        return web3j.ethCall(tx, DefaultBlockParameterName.LATEST).send().getValue();
+        return web3j.ethCall(tx, block).send().getValue();
     }
 
     // ── Retry helper ──────────────────────────────────────────────────────

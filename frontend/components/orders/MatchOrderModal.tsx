@@ -25,6 +25,7 @@ import { toast } from 'sonner';
 import { ZERO_BYTES32 } from '@/lib/constants/swap';
 import { useAttachOrderMetadata } from '@/hooks/useDexApi';
 import { useSettingsStore } from '@/stores/useSettingsStore';
+import { scaleCrossChainAmount } from '@/lib/utils/scaling';
 
 interface MatchOrderModalProps {
   open: boolean;
@@ -72,8 +73,14 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
   const matcherBuyToken = order?.buyToken as `0x${string}` | undefined;
   const matcherBuyTokenInfo = matcherBuyToken ? getTokenByAddress(evmTargetChainId, matcherBuyToken) : undefined;
   const matcherBuyDecimals = matcherBuyTokenInfo?.decimals ?? 18;
-  const CROSS_CHAIN_DECIMALS = 9;
-  const matcherBuyAmountScaled = (order?.buyAmount ?? 0n) * BigInt(10 ** (matcherBuyDecimals - CROSS_CHAIN_DECIMALS));
+  // E-6: safe integer scaling in both directions (handles <9-decimal tokens like USDC/USDT/WBTC).
+  // Guarded: this runs in the render body, and scaleCrossChainAmount throws on a non-divisible
+  // down-scale — an unguarded throw here would white-screen the whole modal. The real (action-path)
+  // scaling at handleMatch still throws and surfaces the error to the user.
+  const matcherBuyAmountScaled = (() => {
+    try { return scaleCrossChainAmount(order?.buyAmount ?? 0n, matcherBuyDecimals); }
+    catch { return 0n; }
+  })();
   const htlcAddressForApproval = (() => {
     try { return getContractAddress(evmTargetChainId, 'htlc') as `0x${string}`; }
     catch { return '0x0000000000000000000000000000000000000000' as `0x${string}`; }
@@ -321,12 +328,22 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
     const secret = generateSecret();
     const hashlock = generateHashlock(secret);
     const timelock = calculateTimelock(true);
+
+    if (!isValidEvmAddress(creatorEvmAddress)) {
+      toast.error('Enter a valid EVM address for the order creator');
+      return;
+    }
+
+    // V-4: the EVM HTLC pays the creator's EVM receive address (creatorEvmAddress), and the
+    // contract binds swapId to (msg.sender, participant, hashlock, timelock, chainId). Derive the
+    // swapId with that exact participant + the EVM target chain id, otherwise the on-chain
+    // createSwap reverts InvalidSwapId.
     const swapId = generateSwapId(
       userAddress,
-      order!.creator,
+      creatorEvmAddress,
       hashlock,
       timelock,
-      targetChainId
+      evmTargetChainId
     );
 
     setPendingSwapData({ secret, hashlock, swapId });
@@ -337,16 +354,11 @@ export function MatchOrderModal({ open, onClose, order, sourceChainId }: MatchOr
       toast.success('Token approved!');
     }
 
-    if (!isValidEvmAddress(creatorEvmAddress)) {
-      toast.error('Enter a valid EVM address for the order creator');
-      return;
-    }
-
     // SUI orders store amounts in 9 decimals (u64 safety); scale to EVM token decimals.
     const evmTokenInfo = getTokenByAddress(evmTargetChainId, order!.buyToken);
     const evmDecimals = evmTokenInfo?.decimals ?? 18;
-    const CROSS_CHAIN_DECIMALS = 9;
-    const scaledAmount = order!.buyAmount * BigInt(10 ** (evmDecimals - CROSS_CHAIN_DECIMALS));
+    // E-6: safe integer scaling in both directions (handles <9-decimal tokens like USDC/USDT/WBTC)
+    const scaledAmount = scaleCrossChainAmount(order!.buyAmount, evmDecimals);
 
     await evmHTLCHook.createSwap({
       swapId,

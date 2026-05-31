@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {TokenManager} from "./TokenManager.sol";
@@ -11,6 +12,8 @@ import {TokenManager} from "./TokenManager.sol";
  * @notice Manages the order book for the decentralized exchange
  */
 contract OrderBook is ReentrancyGuard, Ownable {
+    using SafeERC20 for IERC20;
+
     TokenManager public immutable TOKEN_MANAGER;
     bool public restrictTokens;
     address public tradeContract;
@@ -97,6 +100,9 @@ contract OrderBook is ReentrancyGuard, Ownable {
             }
         }
 
+        // Amount actually escrowed: equals _sellAmount for MATIC; for ERC20 it is the received delta.
+        uint256 finalSellAmount = _sellAmount;
+
         if (_tokenToSell == address(0)) {
             if (msg.value != _sellAmount) revert IncorrectMATICAmount();
         } else {
@@ -105,9 +111,12 @@ contract OrderBook is ReentrancyGuard, Ownable {
             if (tokenToSell.allowance(msg.sender, address(this)) < _sellAmount) {
                 revert InsufficientAllowance();
             }
-            if (!tokenToSell.transferFrom(msg.sender, address(this), _sellAmount)) {
-                revert TokenTransferFailed();
-            }
+            // V-3 class: record the actual received delta (fee-on-transfer tokens deliver less than
+            // _sellAmount) so the shared-pool payout in cancel/move cannot over-draw other orders.
+            uint256 balanceBefore = tokenToSell.balanceOf(address(this));
+            tokenToSell.safeTransferFrom(msg.sender, address(this), _sellAmount);
+            finalSellAmount = tokenToSell.balanceOf(address(this)) - balanceBefore;
+            if (finalSellAmount == 0) revert InvalidAmounts();
         }
 
         uint256 orderId = ++orderCounter;
@@ -117,12 +126,12 @@ contract OrderBook is ReentrancyGuard, Ownable {
             creator: msg.sender,
             tokenToSell: _tokenToSell,
             tokenToBuy: _tokenToBuy,
-            sellAmount: _sellAmount,
+            sellAmount: finalSellAmount,
             buyAmount: _buyAmount,
             status: OrderStatus.Active
         });
 
-        emit OrderCreated(orderId, msg.sender, _tokenToSell, _tokenToBuy, _sellAmount, _buyAmount, block.timestamp);
+        emit OrderCreated(orderId, msg.sender, _tokenToSell, _tokenToBuy, finalSellAmount, _buyAmount, block.timestamp);
         return orderId;
     }
 

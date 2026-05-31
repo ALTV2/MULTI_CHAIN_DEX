@@ -11,7 +11,24 @@ module.exports = {
       optimizer: {
         enabled: true,
         runs: 200
-      }
+      },
+      // SMTChecker — встроенный в solc формальный верификатор на основе SMT-солверов.
+      // Запускается во время compile, проверяет assert/require, переполнения, деление
+      // на ноль и выход за границы массивов. Используется ограниченный модельный
+      // верификатор (BMC, bound = 2): он быстро (секунды на контракт) даёт верифицируемый
+      // результат для линейных свойств. Полный CHC-анализ инвариантов не используется,
+      // поскольку требует значительно большего времени анализа. Включается флагом
+      // окружения SMT_CHECK=1 (см. §4.2.1 ВКР).
+      ...(process.env.SMT_CHECK === "1" && {
+        modelChecker: {
+          engine: "bmc",
+          timeout: 10000,
+          showProvedSafe: false,
+          showUnproved: false,
+          showUnsupported: false,
+          targets: ["assert", "underflow", "overflow", "divByZero", "outOfBounds"]
+        }
+      })
     }
   },
   networks: {

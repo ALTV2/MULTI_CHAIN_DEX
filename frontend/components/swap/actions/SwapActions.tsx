@@ -20,6 +20,7 @@ import { isNativeToken, evmPlaceholderToSuiToken } from '@/lib/constants/tokens'
 import { orderBookABI } from '@/lib/contracts/abis/OrderBook';
 import { CROSS_CHAIN_ORDER_BOOK_ABI } from '@/lib/contracts/abis/CrossChainOrderBook';
 import { HTLC_ABI } from '@/lib/contracts/abis/HTLC';
+import { verifyCounterpartyHtlc, assertClaimableByMe, type OnchainHtlc } from '@/lib/utils/htlcVerify';
 import { useSettingsStore } from '@/stores/useSettingsStore';
 import { toast } from 'sonner';
 import type { ActiveSwap } from '@/types/swap';
@@ -299,6 +300,10 @@ export function CreateCounterHTLCAction({
 
   // SUI→EVM: create SUI counter-HTLC
   const suiHTLC = useCreateSuiHTLC();
+  // For the SUI→EVM counter-HTLC V-1 check: read the matcher's already-locked EVM HTLC.
+  const evmTargetPublicClient = usePublicClient({
+    chainId: typeof meta.targetChainId === 'number' ? meta.targetChainId : undefined,
+  });
 
   // EVM→SUI: creator withdraws from matcher's SUI HTLC using their secret
   const [inputSecret, setInputSecret] = useState('');
@@ -317,6 +322,40 @@ export function CreateCounterHTLCAction({
       // participant = matcher's SUI address (stored as targetAddress by MatchOrderModal)
       const matcherSuiAddress = meta.targetAddress || '';
       if (!matcherSuiAddress) throw new Error('Matcher SUI address not found in swap metadata');
+
+      // V-1: before committing real SUI funds, verify the matcher's already-locked EVM HTLC
+      // actually pays ME (the creator), is bound to the expected hashlock, is still Active, and is
+      // not about to expire. Fail closed. (Exact amount/token checks are intentionally omitted to
+      // avoid false-rejecting on the cross-chain token/decimals mapping — a hardening follow-up.)
+      if (typeof meta.targetChainId === 'number') {
+        try {
+          const evmHtlcAddr = getContractAddress(meta.targetChainId, 'htlc') as `0x${string}`;
+          const ms = (await evmTargetPublicClient!.readContract({
+            address: evmHtlcAddr,
+            abi: HTLC_ABI,
+            functionName: 'getSwap',
+            args: [detectedHTLC.swapId as `0x${string}`],
+          })) as any;
+          assertClaimableByMe(
+            {
+              status: Number(ms.status),
+              participant: ms.participant as string,
+              token: ms.token as string,
+              amount: ms.amount as bigint,
+              hashlock: ms.hashlock as string,
+              timelock: ms.timelock as bigint,
+            },
+            address,
+            detectedHTLC.hashlock as string
+          );
+          const nowSec = BigInt(Math.floor(Date.now() / 1000));
+          if ((ms.timelock as bigint) < nowSec + 3600n) {
+            throw new Error("matcher's EVM HTLC timelock is too close to expiry");
+          }
+        } catch (e: any) {
+          throw new Error(`Refusing to lock SUI funds — matcher EVM HTLC verification failed: ${e?.message || e}`);
+        }
+      }
 
       const { digest, htlcObjectId } = await suiHTLC.createSwap({
         swapId: detectedHTLC.swapId,
@@ -358,6 +397,7 @@ export function CreateCounterHTLCAction({
         swapObjectId: detectedHTLC.htlcObjectId,
         secret: inputSecret as `0x${string}`,
         tokenType: meta.buyToken,
+        verify: { expectedHashlock: meta.hashlock as string }, // V-2
       });
       toast.success('Withdrawn from SUI HTLC successfully!');
       setIsDone(true);
@@ -715,6 +755,10 @@ export function MatcherLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpda
   const { address } = useAccount();
   const suiAccount = useCurrentAccount();
   const { meta } = swap;
+  // V-1/V-9: read the creator's HTLC on the source chain (always EVM in matcher-second flows) to verify it before locking
+  const sourcePublicClient = usePublicClient({
+    chainId: typeof meta.sourceChainId === 'number' ? meta.sourceChainId : undefined,
+  });
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<'idle' | 'approving' | 'locking' | 'done'>('idle');
 
@@ -755,6 +799,44 @@ export function MatcherLockAction({ swap, onUpdate }: { swap: ActiveSwap; onUpda
       }
       const hashlock = meta.hashlock as `0x${string}`;
       const timelock = BigInt(Math.floor(Date.now() / 1000) + 24 * 3600);
+
+      // V-1/V-9: before locking my own funds, verify the creator's on-chain HTLC actually
+      // pays me and matches the agreed token/amount/hashlock and a sufficiently long timelock.
+      // The source leg is always EVM in matcher-second flows. Fail closed.
+      if (typeof meta.sourceChainId === 'number') {
+        if (!meta.creatorHtlcSwapId) {
+          setError("Creator's HTLC not found on-chain yet. Click Refresh and try again.");
+          return;
+        }
+        try {
+          const srcHtlcAddr = getContractAddress(meta.sourceChainId, 'htlc') as `0x${string}`;
+          const cs = (await sourcePublicClient!.readContract({
+            address: srcHtlcAddr,
+            abi: HTLC_ABI,
+            functionName: 'getSwap',
+            args: [meta.creatorHtlcSwapId as `0x${string}`],
+          })) as any;
+          const onchain: OnchainHtlc = {
+            status: Number(cs.status),
+            participant: cs.participant as string,
+            token: cs.token as string,
+            amount: cs.amount as bigint,
+            hashlock: cs.hashlock as string,
+            timelock: cs.timelock as bigint,
+          };
+          verifyCounterpartyHtlc(onchain, {
+            myAddress: address,
+            hashlock,
+            token: meta.sellToken as string,
+            minAmount: BigInt(meta.sellAmount),
+            minTimelock: timelock + 3600n, // creator leg must outlive my 24h leg + margin
+          });
+        } catch (e: any) {
+          setError(`Counterparty HTLC verification failed — not locking: ${e?.message || e}`);
+          setStep('idle');
+          return;
+        }
+      }
 
       if (isSuiTarget) {
         // EVM→SUI: create SUI HTLC — lock SUI tokens for the creator
@@ -890,6 +972,8 @@ export function CreatorWithdrawAction({ swap, onUpdate, detectedHTLC }: { swap: 
   // EVM target: withdraw from EVM HTLC
   const evmTargetChainId = isSuiTarget ? 11155111 : meta.targetChainId as number;
   const evmWithdraw = useWithdrawHTLC(evmTargetChainId);
+  // V-2: read the matcher's EVM HTLC to verify it pays me before revealing the secret
+  const targetPublicClient = usePublicClient({ chainId: evmTargetChainId });
 
   // SUI target: withdraw from SUI HTLC using matcherHtlcObjectId
   const suiWithdraw = useWithdrawSuiHTLC();
@@ -914,6 +998,7 @@ export function CreatorWithdrawAction({ swap, onUpdate, detectedHTLC }: { swap: 
           swapObjectId: objectId,
           secret: inputSecret as `0x${string}`,
           tokenType: meta.buyToken,
+          verify: { expectedHashlock: meta.hashlock as string }, // V-2
         });
         toast.success('Withdrawn from SUI HTLC! Secret revealed on SUI.');
         // Flag that matcher's SUI HTLC was withdrawn so swapPhase advances to secret_revealed
@@ -922,6 +1007,32 @@ export function CreatorWithdrawAction({ swap, onUpdate, detectedHTLC }: { swap: 
         onUpdate();
       } else {
         if (!address || !meta.matcherHtlcSwapId) return;
+        // V-2: do NOT reveal the secret unless the matcher's HTLC actually pays me and
+        // is bound to the expected hashlock (defends against hashlock-collision decoys).
+        try {
+          const htlcAddr = getContractAddress(evmTargetChainId, 'htlc') as `0x${string}`;
+          const ms = (await targetPublicClient!.readContract({
+            address: htlcAddr,
+            abi: HTLC_ABI,
+            functionName: 'getSwap',
+            args: [meta.matcherHtlcSwapId as `0x${string}`],
+          })) as any;
+          assertClaimableByMe(
+            {
+              status: Number(ms.status),
+              participant: ms.participant as string,
+              token: ms.token as string,
+              amount: ms.amount as bigint,
+              hashlock: ms.hashlock as string,
+              timelock: ms.timelock as bigint,
+            },
+            address,
+            meta.hashlock as string
+          );
+        } catch (e: any) {
+          setError(`Refusing to reveal secret — HTLC verification failed: ${e?.message || e}`);
+          return;
+        }
         await evmWithdraw.withdraw(
           meta.matcherHtlcSwapId as `0x${string}`,
           inputSecret as `0x${string}`
@@ -1011,6 +1122,7 @@ export function MatcherWithdrawAction({ swap, onUpdate }: { swap: ActiveSwap; on
   // Use appropriate withdraw hook based on source chain type
   const isEvmSource = typeof sourceChainId === 'number';
   const evmWithdraw = useWithdrawHTLC(isEvmSource ? (sourceChainId as number) : 0);
+  const sourcePublicClient = usePublicClient({ chainId: isEvmSource ? (sourceChainId as number) : undefined });
   const suiWithdraw = useWithdrawSuiHTLC();
   const [isSuiWithdrawDone, setIsSuiWithdrawDone] = useState(false);
 
@@ -1020,6 +1132,28 @@ export function MatcherWithdrawAction({ swap, onUpdate }: { swap: ActiveSwap; on
 
   const withdraw = async (swapIdOrObjectId: string, secret: string) => {
     if (isEvmSource) {
+      // V-2 (defense-in-depth): the secret is already public by now, but still verify the
+      // creator's source HTLC actually pays ME and is bound to the expected hashlock before
+      // spending gas — refuse to act on a decoy / mismatched HTLC.
+      const htlcAddr = getContractAddress(sourceChainId as number, 'htlc') as `0x${string}`;
+      const cs = (await sourcePublicClient!.readContract({
+        address: htlcAddr,
+        abi: HTLC_ABI,
+        functionName: 'getSwap',
+        args: [swapIdOrObjectId as `0x${string}`],
+      })) as any;
+      assertClaimableByMe(
+        {
+          status: Number(cs.status),
+          participant: cs.participant as string,
+          token: cs.token as string,
+          amount: cs.amount as bigint,
+          hashlock: cs.hashlock as string,
+          timelock: cs.timelock as bigint,
+        },
+        address!,
+        meta.hashlock as string
+      );
       return evmWithdraw.withdraw(swapIdOrObjectId as `0x${string}`, secret as `0x${string}`);
     } else {
       // SUI source: withdraw using the Move object ID (not bytes32 swapId)
@@ -1029,6 +1163,7 @@ export function MatcherWithdrawAction({ swap, onUpdate }: { swap: ActiveSwap; on
         swapObjectId: objectId,
         secret: secret as `0x${string}`,
         tokenType: meta.sellToken,
+        verify: { expectedHashlock: meta.hashlock as string }, // V-2
       });
       // Flag that creator's SUI HTLC was withdrawn → swapPhase.ts infers creatorHtlcStatus=Withdrawn
       // → Pattern 2 secret_revealed case triggers → creator can now claim from EVM HTLC
@@ -1138,6 +1273,7 @@ export function SuiSourceMatcherWithdrawAction({ swap, onUpdate }: { swap: Activ
         swapObjectId: objectId,
         secret: effectiveSecret as `0x${string}`,
         tokenType: meta.sellToken,
+        verify: { expectedHashlock: meta.hashlock as string }, // V-2
       });
 
       // Flag that creator's SUI HTLC was withdrawn → swapPhase.ts Pattern 2 → secret_revealed
@@ -1226,6 +1362,7 @@ export function SuiSourceCreatorClaimEvmAction({ swap, onUpdate }: { swap: Activ
   // Withdraw from matcher's EVM HTLC on target chain
   const evmTargetChainId = meta.targetChainId as number;
   const evmWithdraw = useWithdrawHTLC(evmTargetChainId);
+  const targetPublicClient = usePublicClient({ chainId: evmTargetChainId });
 
   useEffect(() => {
     if (evmWithdraw.isSuccess) {
@@ -1240,6 +1377,32 @@ export function SuiSourceCreatorClaimEvmAction({ swap, onUpdate }: { swap: Activ
     const hashlockErr = validateSecretAgainstHashlock(revealedSecret, meta.hashlock);
     if (hashlockErr) { setError(hashlockErr); return; }
     try {
+      // V-2: verify the matcher's EVM HTLC actually pays ME and is bound to the expected hashlock
+      // before withdrawing (defends against a same-hashlock decoy the creator could be steered to).
+      try {
+        const htlcAddr = getContractAddress(evmTargetChainId, 'htlc') as `0x${string}`;
+        const ms = (await targetPublicClient!.readContract({
+          address: htlcAddr,
+          abi: HTLC_ABI,
+          functionName: 'getSwap',
+          args: [meta.matcherHtlcSwapId as `0x${string}`],
+        })) as any;
+        assertClaimableByMe(
+          {
+            status: Number(ms.status),
+            participant: ms.participant as string,
+            token: ms.token as string,
+            amount: ms.amount as bigint,
+            hashlock: ms.hashlock as string,
+            timelock: ms.timelock as bigint,
+          },
+          address,
+          meta.hashlock as string
+        );
+      } catch (e: any) {
+        setError(`Refusing to claim — HTLC verification failed: ${e?.message || e}`);
+        return;
+      }
       await evmWithdraw.withdraw(
         meta.matcherHtlcSwapId as `0x${string}`,
         revealedSecret as `0x${string}`

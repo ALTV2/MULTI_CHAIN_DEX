@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { erc20ABI } from '@/lib/contracts/abis/ERC20';
 import { isNativeToken } from '@/lib/constants/tokens';
 import { maxUint256 } from 'viem';
+import { computeApprovalAmount } from '@/lib/utils/approval';
 
 /**
  * Token approval hook. Uses wagmi's publicClient (wallet RPC) for allowance checks —
@@ -62,7 +63,8 @@ export function useTokenApproval(
         address: tokenAddress,
         abi: erc20ABI,
         functionName: 'approve',
-        args: [spenderAddress, maxUint256],
+        // C-APPROVE: approve exactly what this swap needs, not an unbounded maxUint256 allowance
+        args: [spenderAddress, computeApprovalAmount(amount)],
         gas: 100000n,
         ...gasParams,
       });

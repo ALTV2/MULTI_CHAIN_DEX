@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { keccak256 } from 'viem';
+import { keccak256, encodeAbiParameters } from 'viem';
 import {
   generateSecret,
   generateHashlock,
@@ -103,6 +103,27 @@ describe('generateSwapId', () => {
     expect(generateSwapId(ALICE, BOB, HASHLOCK, 1000, 11155111)).toBe(
       generateSwapId(ALICE, BOB, HASHLOCK, 1000n, 11155111)
     );
+  });
+
+  // V-4: the EVM HTLC contract now REQUIRES swapId == keccak256(abi.encode(initiator, participant,
+  // hashlock, timelock, chainId)) (HTLC.sol _deriveSwapId). For EVM addresses this off-chain
+  // derivation must reproduce that byte-for-byte, or createSwap reverts InvalidSwapId on-chain.
+  it('matches the on-chain abi.encode(address,address,bytes32,uint256,uint256) binding for EVM legs', () => {
+    const chainId = 11155111;
+    const timelock = 1000n;
+    const expected = keccak256(
+      encodeAbiParameters(
+        [
+          { type: 'address' },
+          { type: 'address' },
+          { type: 'bytes32' },
+          { type: 'uint256' },
+          { type: 'uint256' },
+        ],
+        [ALICE, BOB, HASHLOCK, timelock, BigInt(chainId)]
+      )
+    );
+    expect(generateSwapId(ALICE, BOB, HASHLOCK, timelock, chainId)).toBe(expected);
   });
 
   it('normalizes addresses to 32 bytes (short and zero-padded forms collide)', () => {

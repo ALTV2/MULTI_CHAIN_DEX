@@ -51,6 +51,49 @@ Out of scope:
   exploited against this project (please report to the upstream maintainer)
 - Issues that require physical access to a user's device or wallet
 
+## Known limitations (accepted for the testnet prototype)
+
+These are understood trade-offs of a plain HTLC design, documented rather than
+fixed in the current version:
+
+- **HTLC free-option / optionality griefing (E-1).** The order creator holds the
+  secret and locks the long-timelock leg first; the matcher then locks the
+  short-timelock (≈24 h) leg. The creator can choose *not* to reveal the secret,
+  in which case the matcher's capital is frozen until its timelock expires and the
+  matcher then refunds. No funds are stolen (the protocol stays atomic — see the
+  timelock invariant in §1.4.5 / §4.6.2), but the creator effectively obtains a
+  free ~24 h option on price while the matcher's capital is locked at zero cost to
+  the creator. This is inherent to bridgeless/oracle-free HTLC swaps. Production
+  mitigations (out of scope for this prototype): require a non-refundable
+  safety-deposit / option premium from the creator that the matcher claims on
+  non-reveal, and/or shorten the absolute timelocks and the T₁−T₂ gap to reduce
+  option value. Matchers should price in this optionality and prefer reputable
+  counterparties.
+
+## Re-audit follow-ups
+
+A second adversarial pass re-verified the applied fixes and surfaced further items. The two
+highest-value ones have since been **implemented in source**:
+
+- **Contract-bound swap IDs (V-4) — fixed in source (takes effect on next deploy).** `createSwap`
+  now requires `_swapId == keccak256(abi.encode(initiator, participant, hashlock, timelock,
+  chainId))` (`HTLC.sol` `_deriveSwapId`, both chains), binding the id to its parameters so a
+  caller cannot supply an arbitrary/decoy id. The off-chain derivation
+  (`frontend/lib/utils/crossChainCrypto.ts` `generateSwapId`) already matches this encoding
+  byte-for-byte (locked by a unit test). Requires a redeploy to take effect on the live contracts.
+
+- **SUI-leg counterparty verification (V-1/V-2) — fixed.** The SUI→EVM counter-HTLC creation
+  verifies the matcher's EVM HTLC before the creator commits SUI funds, and every SUI withdraw now
+  fail-closed verifies the on-chain Swap object before revealing the secret
+  (`frontend/lib/utils/suiSwapVerify.ts` `assertSuiClaimableByMe`: status Active, participant ==
+  me, hashlock match, balance > 0). A precise `minAmount` check remains as a follow-up.
+
+The remaining items (V-11 indexer DoS, V-10 metadata front-running, V-7 SUI overpayment, SUI
+`add_supported_chain` access control, order-book spam, rebasing-token coverage, the E-1 free-option
+griefing limitation, and the SUI `minAmount` follow-up) are tracked with concrete remediations in
+[`docs/FUTURE_WORK.md`](docs/FUTURE_WORK.md). None is an active fund-theft vector given the on-chain
+timelock invariant plus the client-side HTLC verification already in place.
+
 ## Disclaimer
 
 This software is provided **as-is** for educational and testnet purposes.

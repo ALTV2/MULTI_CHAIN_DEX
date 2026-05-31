@@ -11,6 +11,7 @@ import {
   clearAllSwaps,
   cleanupAllFakeOrders,
 } from './swapStorage';
+import { useSettingsStore } from '@/stores/useSettingsStore';
 import type { StoredSwapMeta } from '@/types/swap';
 
 const WALLET = '0xAbCdef0000000000000000000000000000000001';
@@ -33,7 +34,12 @@ function swap(overrides: Partial<StoredSwapMeta> = {}): StoredSwapMeta {
   };
 }
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  // Default to the legacy "save secret to localStorage" mode unless a test
+  // explicitly switches to 'show_once'.
+  useSettingsStore.setState({ secretStorage: 'local' });
+});
 
 describe('swapStorage', () => {
   it('returns [] when nothing stored', () => {
@@ -46,6 +52,18 @@ describe('swapStorage', () => {
     expect(read).toHaveLength(1);
     expect(read[0].orderId).toBe('1');
     expect(getSecret(WALLET, '1', 11155111)).toBe('0xsecret');
+  });
+
+  it('strips the secret field when secretStorage is "show_once"', () => {
+    useSettingsStore.setState({ secretStorage: 'show_once' });
+    saveSwap(WALLET, swap({ secret: '0xsecret', hashlock: '0xH' }));
+    const read = getSwaps(WALLET);
+    expect(read).toHaveLength(1);
+    // Non-secret metadata still persisted.
+    expect(read[0].hashlock).toBe('0xH');
+    // Secret is dropped.
+    expect(read[0].secret).toBeUndefined();
+    expect(getSecret(WALLET, '1', 11155111)).toBeUndefined();
   });
 
   it('updates an existing swap in place (matched by orderId + sourceChainId)', () => {

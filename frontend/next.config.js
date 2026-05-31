@@ -1,7 +1,13 @@
 /** @type {import('next').NextConfig} */
+const { securityHeaders } = require('./lib/security/securityHeaders');
+
 const nextConfig = {
   output: 'standalone',
   reactStrictMode: true,
+  // C-XSS: strict security headers (CSP, anti-clickjacking, nosniff) on every route
+  async headers() {
+    return [{ source: '/:path*', headers: securityHeaders() }];
+  },
   webpack: (config) => {
     config.resolve.fallback = {
       fs: false,
